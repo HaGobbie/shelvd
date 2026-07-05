@@ -2,8 +2,14 @@
 // Bottom-sheet modal that lets an owner edit their store's profile
 // and GIS location (address + draggable Leaflet pin).
 //
-// On save → updateDoc on the "Stores/{storeId}" document with:
-//   name, type, ownerName, contactNumber, address, lat, lng, updatedAt
+// On save → supabase.from('stores').update(...).eq('id', store.id) with:
+//   name, type, owner_name, contact_number, address, location (PostGIS point)
+//
+// NOTE ON WRITING GEOGRAPHY COLUMNS: `stores.location` is a
+// geography(Point, 4326) column; `latitude`/`longitude` are generated
+// (read-only) columns derived from it, so we never write those directly.
+// PostgREST/Postgres accepts an EWKT string like "SRID=4326;POINT(lng lat)"
+// for a geography column, so we just send that as a plain string value.
 
 import React, { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -26,8 +32,7 @@ import {
   Store,
   Phone,
 } from "lucide-react";
-import { doc, updateDoc, serverTimestamp } from "firebase/firestore";
-import { db } from "../firebase/config";
+import { supabase } from "../config/supabaseClient";
 
 // ─── Leaflet icon fix ─────────────────────────────────────────────────────────
 delete L.Icon.Default.prototype._getIconUrl;
@@ -100,7 +105,7 @@ function FlyController({ target }) {
  * @param {{
  *   isOpen: boolean,
  *   onClose: Function,
- *   store: object          — the current store document from Firestore
+ *   store: object          — the current store object (from useMyStore, camelCase)
  * }} props
  */
 export default function StoreEditModal({ isOpen, onClose, store }) {
@@ -211,28 +216,32 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
     setSaving(true);
     setSaveError("");
 
-    try {
-      await updateDoc(doc(db, "Stores", store.id), {
-        name:          name.trim(),
+    const { error: updateError } = await supabase
+      .from("stores")
+      .update({
+        name:           name.trim(),
         type,
-        ownerName:     ownerName.trim(),
-        contactNumber: contactNumber.trim(),
-        address:       address.trim(),
-        lat,
-        lng,
-        updatedAt:     serverTimestamp(),
-      });
-      setSaved(true);
-      setTimeout(() => {
-        setSaved(false);
-        onClose();
-      }, 900);
-    } catch (err) {
-      console.error("Store update failed:", err);
+        owner_name:     ownerName.trim(),
+        contact_number: contactNumber.trim(),
+        address:        address.trim(),
+        // EWKT text — Postgres casts this to geography(Point, 4326) automatically.
+        location:       `SRID=4326;POINT(${lng} ${lat})`,
+      })
+      .eq("id", store.id);
+
+    if (updateError) {
+      console.error("Store update failed:", updateError);
       setSaveError("Failed to save. Please check your connection and try again.");
-    } finally {
       setSaving(false);
+      return;
     }
+
+    setSaving(false);
+    setSaved(true);
+    setTimeout(() => {
+      setSaved(false);
+      onClose();
+    }, 900);
   };
 
   const hasCoords = lat !== null && lng !== null;

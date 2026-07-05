@@ -3,13 +3,14 @@
 //
 // Step 1 — Store Details   : name, type, owner name, contact number
 // Step 2 — GIS Location    : Nominatim address search + draggable Leaflet pin
-// Step 3 — Review & Submit : summary before writing to Firestore
+// Step 3 — Review & Submit : summary before writing to Supabase
 //
-// On submit → addDoc to "Stores" collection with ownerId = user.uid
-// Coordinates stored as separate `lat` and `lng` number fields (matches
-// the existing schema in your Firestore "Stores" documents).
+// On submit → supabase.from('stores').insert({ ..., owner_id: user.id, status: 'pending_approval' })
+// Coordinates are sent as a single PostGIS `location` field using EWKT text
+// ("SRID=4326;POINT(lng lat)") — Postgres casts this to geography(Point,4326)
+// automatically; `latitude`/`longitude` are generated columns derived from it.
 
-import React, { useState, useCallback, useRef, useEffect } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   MapContainer,
@@ -31,8 +32,7 @@ import {
   Loader2,
   AlertTriangle,
 } from "lucide-react";
-import { collection, addDoc, serverTimestamp } from "firebase/firestore";
-import { db } from "../firebase/config";
+import { supabase } from "../config/supabaseClient";
 
 // ─── Fix Leaflet default icon path (Vite bundler issue) ──────────────────────
 delete L.Icon.Default.prototype._getIconUrl;
@@ -222,7 +222,7 @@ function StepGISLocation({ data, onChange, errors }) {
         return;
       }
 
-      const { lat, lon, display_name } = results[0];
+      const { lat, lon } = results[0];
       const newLat = parseFloat(lat);
       const newLng = parseFloat(lon);
 
@@ -432,10 +432,10 @@ const INITIAL_DATA = {
 
 /**
  * StoreRegistrationForm
- * Shows a 3-step wizard and writes the new store to Firestore on submit.
- * Parent passes `user` (Firebase Auth user) and `onComplete` callback.
+ * Shows a 3-step wizard and writes the new store to Supabase on submit,
+ * starting in "pending_approval" status per the RLS insert policy.
  *
- * @param {{ user: object, onComplete: Function }} props
+ * @param {{ user: import("@supabase/supabase-js").User, onComplete: Function }} props
  */
 export default function StoreRegistrationForm({ user, onComplete }) {
   const [step, setStep]       = useState(1);
@@ -488,27 +488,28 @@ export default function StoreRegistrationForm({ user, onComplete }) {
     setSubmitting(true);
     setSubmitError("");
 
-    try {
-      await addDoc(collection(db, "Stores"), {
-        name:          data.name.trim(),
-        type:          data.type,
-        ownerName:     data.ownerName.trim(),
-        contactNumber: data.contactNumber.trim(),
-        address:       data.address.trim(),
-        lat:           data.lat,
-        lng:           data.lng,
-        ownerId:       user.uid,
-        ownerEmail:    user.email,
-        createdAt:     serverTimestamp(),
-        updatedAt:     serverTimestamp(),
-      });
-      onComplete?.();
-    } catch (err) {
-      console.error("Store registration failed:", err);
+    const { error: insertError } = await supabase.from("stores").insert({
+      name:           data.name.trim(),
+      type:           data.type,
+      owner_name:     data.ownerName.trim(),
+      contact_number: data.contactNumber.trim(),
+      address:        data.address.trim(),
+      // EWKT text -> geography(Point, 4326); latitude/longitude are generated
+      location:       `SRID=4326;POINT(${data.lng} ${data.lat})`,
+      owner_id:       user.id,
+      owner_email:    user.email,
+      status:         "pending_approval",
+    });
+
+    if (insertError) {
+      console.error("Store registration failed:", insertError);
       setSubmitError("Registration failed. Please check your connection and try again.");
-    } finally {
       setSubmitting(false);
+      return;
     }
+
+    setSubmitting(false);
+    onComplete?.();
   };
 
   // ─────────────────────────────────────────────────────────────────────────
