@@ -2,13 +2,12 @@
 // A focused, centered confirmation dialog that appears before deleting a product.
 // Prevents accidental deletion — the owner must explicitly confirm.
 // Uses Framer Motion for a scale-in entrance.
-// Firestore: deleteDoc(doc(db, "Stores", storeId, "Inventory", productId))
+// Supabase: supabase.from('inventory').delete().eq('id', product.id)
 
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Trash2, X, AlertTriangle } from "lucide-react";
-import { doc, deleteDoc } from "firebase/firestore";
-import { db } from "../firebase/config";
+import { supabase } from "../config/supabaseClient";
 
 // ─── Animation variants ───────────────────────────────────────────────────────
 const overlayVariants = {
@@ -38,14 +37,16 @@ const dialogVariants = {
  * @typedef {Object} ConfirmDeleteModalProps
  * @property {boolean}      isOpen
  * @property {Function}     onClose
- * @property {string}       storeId
+ * @property {string}       storeId   — kept for API compatibility (not needed
+ *                                      for the delete itself; RLS already
+ *                                      scopes deletes to the owner's own store)
  * @property {Object|null}  product   — the product to be deleted
  */
 
 /**
  * ConfirmDeleteModal
  * Shows the product name prominently so the owner is certain what they're deleting.
- * On confirm, calls Firestore deleteDoc, then closes.
+ * On confirm, deletes the row from Supabase, then closes.
  *
  * @param {ConfirmDeleteModalProps} props
  */
@@ -59,21 +60,25 @@ export default function ConfirmDeleteModal({
   const [error, setError] = useState("");
 
   const handleDelete = async () => {
-    if (!product || !storeId) return;
+    if (!product) return;
 
     setDeleting(true);
     setError("");
 
-    try {
-      const productRef = doc(db, "Stores", storeId, "Inventory", product.id);
-      await deleteDoc(productRef);
-      onClose();
-    } catch (err) {
-      console.error("Delete failed:", err);
+    const { error: deleteError } = await supabase
+      .from("inventory")
+      .delete()
+      .eq("id", product.id);
+
+    if (deleteError) {
+      console.error("Delete failed:", deleteError);
       setError("Could not delete. Please check your connection and try again.");
-    } finally {
       setDeleting(false);
+      return;
     }
+
+    setDeleting(false);
+    onClose();
   };
 
   return (
