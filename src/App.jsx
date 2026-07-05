@@ -11,7 +11,7 @@ import MapContainer from "./components/MapContainer";
 import SearchBar from "./components/SearchBar";
 import StoreDetails from "./components/StoreDetails";
 import OwnerDashboard from "./pages/OwnerDashboard";
-import { useStores } from "./hooks/useStores";
+import { useMapMarkers, useStoreDetails, useDebouncedSearchMatches } from "./hooks/useStores";
 
 import "./styles/App.css";
 
@@ -30,33 +30,36 @@ function useHashRoute() {
 
 export default function App() {
   const route = useHashRoute();
-  const { stores, loading, updateProductStatus } = useStores();
+
+  // Lightweight markers for the whole map (id, name, coords, worstStatus)
+  const { markers, loading } = useMapMarkers();
 
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedStore, setSelectedStore] = useState(null);
+  const [selectedStoreId, setSelectedStoreId] = useState(null);
 
-  const handleStoreSelect = useCallback((store) => {
-    setSelectedStore(store);
+  // Full store + inventory, fetched ONLY for the currently selected pin
+  const { store: selectedStore } = useStoreDetails(selectedStoreId);
+
+  // Debounced server-side product search (search_inventory() RPC) — powers
+  // both the map pin highlighting and the "N stores carry X" badge.
+  const { matches: searchMatches } = useDebouncedSearchMatches(searchQuery);
+
+  const handleStoreSelect = useCallback((storeId) => {
+    setSelectedStoreId(storeId);
   }, []);
 
   const handleSheetClose = useCallback(() => {
-    setSelectedStore(null);
+    setSelectedStoreId(null);
   }, []);
 
   const handleSearchChange = useCallback((query) => {
     setSearchQuery(query);
     // Close details sheet when user starts a new search
-    if (query.trim()) setSelectedStore(null);
+    if (query.trim()) setSelectedStoreId(null);
   }, []);
 
-  // Count stores that match the current search query
-  const resultCount = searchQuery.trim()
-    ? stores.filter((store) =>
-        store.inventory.some((p) =>
-          p.name.toLowerCase().includes(searchQuery.toLowerCase())
-        )
-      ).length
-    : 0;
+  // Count stores that match the current search query (server-computed)
+  const resultCount = searchQuery.trim() ? searchMatches.size : 0;
 
   // ─── Owner Dashboard route ──────────────────────────────────────────────
   if (route === "#/dashboard") {
@@ -95,11 +98,12 @@ export default function App() {
     <div className="app-container">
       {/* Full-bleed map */}
       <MapContainer
-        stores={stores}
+        markers={markers}
         loading={loading}
         searchQuery={searchQuery}
+        searchMatches={searchMatches}
         onStoreSelect={handleStoreSelect}
-        selectedStoreId={selectedStore?.id ?? null}
+        selectedStoreId={selectedStoreId}
       />
 
       {/* Floating search bar — sits above the map */}
