@@ -1,4 +1,4 @@
-// src/supabaseClient.js
+// src/config/supabaseClient.js
 //
 // Replaces src/firebase/config.js
 //
