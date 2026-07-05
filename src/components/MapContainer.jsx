@@ -1,9 +1,21 @@
 // src/components/MapContainer.jsx
-// Main Leaflet map.  Centered on Catalunan Grande, Davao City.
+// Main Leaflet map. Centered on Catalunan Grande, Davao City.
 // Uses Canvas rendering for optimal performance with many pins.
 // Tile source: CartoDB Positron (clean, light, reads well on mobile).
+//
+// ARCHITECTURE NOTE (post-Supabase-migration):
+// This component used to derive each pin's color by scanning the full
+// `store.inventory` array that Firestore preloaded for every store. That
+// data is no longer fetched for the whole map (useMapMarkers() only
+// returns id/name/coords/worstStatus — see src/hooks/useStores.js), so:
+//   - With no search active: color comes from `marker.worstStatus`, a
+//     column maintained server-side by a Postgres trigger.
+//   - With a search active: color/highlight comes from `searchMatches`,
+//     a Map<storeId, { count, worstStatus }> produced by the
+//     useDebouncedSearchMatches() hook in App.jsx, which calls the
+//     search_inventory() Postgres RPC.
 
-import React, { useMemo, useRef } from "react";
+import React, { useMemo } from "react";
 import {
   MapContainer as LeafletMap,
   TileLayer,
@@ -13,7 +25,6 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
 import StoreMarker from "./StoreMarker";
-import { getWorstStatusForQuery } from "../hooks/useStores";
 
 // ─── Fix Leaflet's default icon path issue with Vite bundlers ─────────────────
 delete L.Icon.Default.prototype._getIconUrl;
@@ -49,56 +60,52 @@ function MapController({ flyTo }) {
 
 /**
  * @typedef {Object} MapContainerProps
- * @property {import("../hooks/useStores").Store[]} stores
+ * @property {Array}    markers        — from useMapMarkers(): {id, name, coords, worstStatus}
  * @property {boolean}  loading
  * @property {string}   searchQuery
- * @property {Function} onStoreSelect  — called with a Store object when a pin is clicked
+ * @property {Map}      searchMatches  — from useDebouncedSearchMatches(): Map<storeId, {count, worstStatus}>
+ * @property {Function} onStoreSelect  — called with a marker's id when a pin is clicked
  * @property {string|null} selectedStoreId
  */
 
 /**
  * MapContainer
  * Renders the full-bleed Leaflet map with all store pins.
- * When `searchQuery` is active, pins reflect the matched product status.
- * Pins for stores with no matching product are dimmed.
+ * When `searchQuery` is active, pins reflect the matched product status
+ * from `searchMatches` (server-computed) rather than client-side inventory.
  *
  * @param {MapContainerProps} props
  */
 export default function MapContainer({
-  stores = [],
+  markers = [],
   loading = false,
   searchQuery = "",
+  searchMatches = new Map(),
   onStoreSelect,
   selectedStoreId = null,
 }) {
-  // Derive display data per store from the current search query
-  const storeDisplayData = useMemo(() => {
-    return stores.map((store) => {
-      const matchedStatus = getWorstStatusForQuery(store.inventory, searchQuery);
-      const hasMatch = searchQuery.trim() ? matchedStatus !== null : true;
+  const searchActive = searchQuery.trim().length > 0;
 
-      // When no search is active, show overall store health
-      let displayStatus;
-      if (!searchQuery.trim()) {
-        // Bubble up worst status across all products
-        const allStatuses = store.inventory.map((p) => p.status);
-        if (allStatuses.includes("out")) displayStatus = "out";
-        else if (allStatuses.includes("low")) displayStatus = "low";
-        else displayStatus = "available";
-      } else {
-        displayStatus = matchedStatus;
+  // Derive display data per marker from the current search matches
+  const markerDisplayData = useMemo(() => {
+    return markers.map((marker) => {
+      if (!searchActive) {
+        return {
+          marker,
+          displayStatus: marker.worstStatus,
+          hasMatch: true,
+          matchCount: 0,
+        };
       }
-
-      // Count matching products
-      const matchCount = searchQuery.trim()
-        ? store.inventory.filter((p) =>
-            p.name.toLowerCase().includes(searchQuery.toLowerCase())
-          ).length
-        : store.inventory.length;
-
-      return { store, displayStatus, hasMatch, matchCount };
+      const match = searchMatches.get(marker.id);
+      return {
+        marker,
+        displayStatus: match ? match.worstStatus : null,
+        hasMatch: Boolean(match),
+        matchCount: match ? match.count : 0,
+      };
     });
-  }, [stores, searchQuery]);
+  }, [markers, searchActive, searchMatches]);
 
   // Leaflet canvas renderer for performance
   const canvasRenderer = useMemo(() => L.canvas({ padding: 0.5 }), []);
@@ -131,25 +138,25 @@ export default function MapContainer({
 
         <MapController flyTo={null} />
 
-        {storeDisplayData.map(({ store, displayStatus, hasMatch, matchCount }) => (
+        {markerDisplayData.map(({ marker, displayStatus, hasMatch, matchCount }) => (
           <StoreMarker
-            key={store.id}
-            store={store}
+            key={marker.id}
+            store={marker}
             displayStatus={displayStatus}
             isHighlighted={hasMatch}
             matchCount={matchCount}
-            isSelected={selectedStoreId === store.id}
-            searchActive={searchQuery.trim().length > 0}
-            onClick={() => onStoreSelect && onStoreSelect(store)}
+            isSelected={selectedStoreId === marker.id}
+            searchActive={searchActive}
+            onClick={() => onStoreSelect && onStoreSelect(marker.id)}
           />
         ))}
       </LeafletMap>
 
       {/* Search results summary badge */}
-      {searchQuery.trim() && !loading && (
+      {searchActive && !loading && (
         <div className="search-results-badge">
-          {storeDisplayData.filter((d) => d.hasMatch).length} store
-          {storeDisplayData.filter((d) => d.hasMatch).length !== 1 ? "s" : ""}{" "}
+          {markerDisplayData.filter((d) => d.hasMatch).length} store
+          {markerDisplayData.filter((d) => d.hasMatch).length !== 1 ? "s" : ""}{" "}
           carry "{searchQuery}"
         </div>
       )}
