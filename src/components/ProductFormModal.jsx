@@ -1,0 +1,391 @@
+// src/components/ProductFormModal.jsx
+// Framer Motion bottom-sheet modal for Adding and Editing a product.
+// Used by OwnerDashboard — receives an `initialData` prop that is null
+// when adding a new product, or a product object when editing.
+//
+// Firestore operations:
+//   ADD  → addDoc(collection(db, "Stores", storeId, "Inventory"), payload)
+//   EDIT → updateDoc(doc(db, "Stores", storeId, "Inventory", productId), payload)
+
+import React, { useState, useEffect, useRef } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  X,
+  PackageCheck,
+  AlertTriangle,
+  PackageX,
+  Save,
+  Plus,
+} from "lucide-react";
+import {
+  collection,
+  addDoc,
+  doc,
+  updateDoc,
+  serverTimestamp,
+} from "firebase/firestore";
+import { db } from "../firebase/config";
+
+// ─── Predefined categories matching your capstone domain ─────────────────────
+const CATEGORIES = [
+  "Pantry",
+  "Grains",
+  "Canned Goods",
+  "Beverages",
+  "Condiments",
+  "Dairy & Eggs",
+  "Household",
+  "Personal Care",
+  "Snacks",
+  "Frozen Goods",
+  "Other",
+];
+
+const STATUS_OPTIONS = [
+  {
+    value: "available",
+    label: "Available",
+    Icon: PackageCheck,
+    color: "#2ECC71",
+    bg: "rgba(46,204,113,0.10)",
+    border: "rgba(46,204,113,0.45)",
+  },
+  {
+    value: "low",
+    label: "Low Stock",
+    Icon: AlertTriangle,
+    color: "#F1C40F",
+    bg: "rgba(241,196,15,0.10)",
+    border: "rgba(241,196,15,0.45)",
+  },
+  {
+    value: "out",
+    label: "Out of Stock",
+    Icon: PackageX,
+    color: "#E74C3C",
+    bg: "rgba(231,76,60,0.10)",
+    border: "rgba(231,76,60,0.45)",
+  },
+];
+
+// ─── Animation variants ───────────────────────────────────────────────────────
+const overlayVariants = {
+  hidden: { opacity: 0 },
+  visible: { opacity: 1, transition: { duration: 0.2 } },
+  exit:    { opacity: 0, transition: { duration: 0.16 } },
+};
+
+const sheetVariants = {
+  hidden:  { y: "100%", opacity: 0 },
+  visible: {
+    y: 0,
+    opacity: 1,
+    transition: { type: "spring", damping: 28, stiffness: 320, mass: 0.9 },
+  },
+  exit: {
+    y: "100%",
+    opacity: 0,
+    transition: { type: "tween", ease: "easeIn", duration: 0.2 },
+  },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * @typedef {Object} ProductFormModalProps
+ * @property {boolean}       isOpen
+ * @property {Function}      onClose
+ * @property {string}        storeId      — Firestore store document ID
+ * @property {Object|null}   initialData  — null = Add mode, object = Edit mode
+ */
+
+/**
+ * ProductFormModal
+ * Single component that handles both Add and Edit flows.
+ * The title and submit button label change based on whether initialData is provided.
+ *
+ * @param {ProductFormModalProps} props
+ */
+export default function ProductFormModal({
+  isOpen,
+  onClose,
+  storeId,
+  initialData = null,
+}) {
+  const isEditMode = Boolean(initialData);
+
+  // ─── Form state ────────────────────────────────────────────────────────────
+  const [name, setName]           = useState("");
+  const [category, setCategory]   = useState(CATEGORIES[0]);
+  const [status, setStatus]       = useState("available");
+  const [customCategory, setCustomCategory] = useState("");
+  const [saving, setSaving]       = useState(false);
+  const [error, setError]         = useState("");
+  const nameInputRef              = useRef(null);
+
+  // Populate form when editing or reset when adding
+  useEffect(() => {
+    if (isOpen) {
+      if (isEditMode && initialData) {
+        setName(initialData.name ?? "");
+        setStatus(initialData.status ?? "available");
+        // If the stored category matches a preset, select it; otherwise use "Other"
+        const match = CATEGORIES.includes(initialData.category);
+        setCategory(match ? initialData.category : "Other");
+        setCustomCategory(match ? "" : (initialData.category ?? ""));
+      } else {
+        setName("");
+        setCategory(CATEGORIES[0]);
+        setStatus("available");
+        setCustomCategory("");
+      }
+      setError("");
+      // Auto-focus the name field after the animation settles
+      setTimeout(() => nameInputRef.current?.focus(), 320);
+    }
+  }, [isOpen, isEditMode, initialData]);
+
+  // ─── Validation ────────────────────────────────────────────────────────────
+  const validate = () => {
+    if (!name.trim()) return "Product name is required.";
+    if (name.trim().length > 80) return "Product name must be 80 characters or fewer.";
+    if (category === "Other" && !customCategory.trim())
+      return "Please enter a custom category.";
+    return null;
+  };
+
+  // ─── Submit ────────────────────────────────────────────────────────────────
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    const validationError = validate();
+    if (validationError) { setError(validationError); return; }
+
+    setSaving(true);
+    setError("");
+
+    const finalCategory =
+      category === "Other" ? customCategory.trim() : category;
+
+    const payload = {
+      name: name.trim(),
+      category: finalCategory,
+      status,
+      lastUpdated: serverTimestamp(),
+    };
+
+    try {
+      if (isEditMode) {
+        // EDIT: update the existing document
+        const productRef = doc(
+          db,
+          "Stores",
+          storeId,
+          "Inventory",
+          initialData.id
+        );
+        await updateDoc(productRef, payload);
+      } else {
+        // ADD: create a new document with an auto-generated ID
+        await addDoc(collection(db, "Stores", storeId, "Inventory"), payload);
+      }
+      onClose();
+    } catch (err) {
+      console.error("Firestore write failed:", err);
+      setError("Failed to save. Please check your connection and try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <AnimatePresence>
+      {isOpen && (
+        <>
+          {/* Dimmed backdrop */}
+          <motion.div
+            className="sheet-overlay"
+            style={{ zIndex: 1000 }}
+            variants={overlayVariants}
+            initial="hidden"
+            animate="visible"
+            exit="exit"
+            onClick={onClose}
+            aria-hidden="true"
+          />
+
+          {/* Sheet panel */}
+          <motion.div
+            className="sheet-panel"
+            style={{ zIndex: 1001, maxHeight: "92dvh" }}
+            variants={sheetVariants}
+            initial="hidden"
+            animate="visible"
+            exit="exit"
+            drag="y"
+            dragConstraints={{ top: 0 }}
+            dragElastic={{ top: 0, bottom: 0.4 }}
+            onDragEnd={(_, info) => { if (info.offset.y > 100) onClose(); }}
+            role="dialog"
+            aria-modal="true"
+            aria-label={isEditMode ? "Edit product" : "Add new product"}
+          >
+            {/* Drag handle */}
+            <div className="sheet-handle" aria-hidden="true" />
+
+            {/* Header */}
+            <div className="sheet-header">
+              <div className="sheet-header__info">
+                <h2 className="sheet-header__name">
+                  {isEditMode ? "Edit Product" : "Add New Product"}
+                </h2>
+                <span className="sheet-header__type">
+                  {isEditMode
+                    ? "Update the details below and save."
+                    : "Fill in the details to add this product to your inventory."}
+                </span>
+              </div>
+              <button
+                className="sheet-close-btn"
+                onClick={onClose}
+                aria-label="Close"
+                type="button"
+              >
+                <X size={20} strokeWidth={2} />
+              </button>
+            </div>
+
+            {/* Form body */}
+            <div className="sheet-inventory" style={{ padding: "16px 20px 32px" }}>
+              <form onSubmit={handleSubmit} noValidate>
+
+                {/* ── Product Name ── */}
+                <div className="pform__field">
+                  <label className="pform__label" htmlFor="pform-name">
+                    Product Name <span className="pform__required">*</span>
+                  </label>
+                  <input
+                    ref={nameInputRef}
+                    id="pform-name"
+                    className="pform__input"
+                    type="text"
+                    placeholder="e.g. Cooking Oil (1L)"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    maxLength={80}
+                    autoComplete="off"
+                  />
+                  <span className="pform__char-count">{name.length}/80</span>
+                </div>
+
+                {/* ── Category ── */}
+                <div className="pform__field">
+                  <label className="pform__label" htmlFor="pform-category">
+                    Category <span className="pform__required">*</span>
+                  </label>
+                  <select
+                    id="pform-category"
+                    className="pform__select"
+                    value={category}
+                    onChange={(e) => setCategory(e.target.value)}
+                  >
+                    {CATEGORIES.map((cat) => (
+                      <option key={cat} value={cat}>{cat}</option>
+                    ))}
+                  </select>
+                  {/* Custom category input shown only when "Other" is selected */}
+                  <AnimatePresence>
+                    {category === "Other" && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: "auto", opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.18 }}
+                        style={{ overflow: "hidden" }}
+                      >
+                        <input
+                          className="pform__input"
+                          style={{ marginTop: 8 }}
+                          type="text"
+                          placeholder="Enter custom category…"
+                          value={customCategory}
+                          onChange={(e) => setCustomCategory(e.target.value)}
+                          maxLength={40}
+                          autoComplete="off"
+                        />
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+
+                {/* ── Status ── */}
+                <div className="pform__field">
+                  <label className="pform__label">
+                    Current Status <span className="pform__required">*</span>
+                  </label>
+                  <div className="status-radio-group">
+                    {STATUS_OPTIONS.map(({ value, label, Icon, color, bg, border }) => {
+                      const isSelected = status === value;
+                      return (
+                        <button
+                          key={value}
+                          type="button"
+                          role="radio"
+                          aria-checked={isSelected}
+                          className={`status-radio-tile ${isSelected ? "status-radio-tile--active" : ""}`}
+                          style={isSelected ? { background: bg, borderColor: border, color } : {}}
+                          onClick={() => setStatus(value)}
+                        >
+                          <Icon size={22} strokeWidth={isSelected ? 2.5 : 1.8} />
+                          <span>{label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* ── Error message ── */}
+                {error && (
+                  <motion.p
+                    className="pform__error"
+                    initial={{ opacity: 0, y: -4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                  >
+                    ⚠️ {error}
+                  </motion.p>
+                )}
+
+                {/* ── Submit button ── */}
+                <button
+                  type="submit"
+                  className="pform__submit"
+                  disabled={saving}
+                >
+                  {saving ? (
+                    <>
+                      <span
+                        className="map-loading-spinner"
+                        style={{ width: 18, height: 18, borderWidth: 2, borderTopColor: "#fff" }}
+                      />
+                      Saving…
+                    </>
+                  ) : isEditMode ? (
+                    <>
+                      <Save size={18} />
+                      Save Changes
+                    </>
+                  ) : (
+                    <>
+                      <Plus size={18} />
+                      Add Product
+                    </>
+                  )}
+                </button>
+
+              </form>
+            </div>
+          </motion.div>
+        </>
+      )}
+    </AnimatePresence>
+  );
+}
