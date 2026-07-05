@@ -1,30 +1,130 @@
 // src/hooks/useStores.js
 //
-// Replaces the Firestore version of useStores.js.
-//
-// BANDWIDTH STRATEGY (Supabase free tier = 5GB egress/month):
-//   1. useMapMarkers()   -> tiny payload: id, name, lat, lng only.
-//                           This is what renders on the Leaflet map.
-//   2. useStoreDetails() -> full store row + inventory, fetched ON DEMAND
-//                           only when a resident taps a pin (not preloaded
-//                           for every store like your old nested onSnapshot
-//                           did for ALL stores at once).
-//   3. Realtime channels -> only touch the tables actually being watched,
-//                           and are torn down in useEffect cleanup so you
-//                           never accumulate zombie WebSocket subscriptions.
+// Central data layer for the whole app. Every component keeps working with
+// the SAME camelCase shapes it always used (store.ownerName, product.lastUpdated,
+// store.coords, etc). This file is the only place that knows about Supabase's
+// snake_case columns — it maps in both directions so the rest of your
+// components (StoreDetails, ProductFormModal, StoreEditModal, etc.) needed
+// minimal changes.
 
-import { useState, useEffect, useCallback } from "react";
-import { supabase } from "../supabase/supabaseClient";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { supabase } from "../config/supabaseClient";
 
-/** @typedef {"available"|"low"|"out"} StockStatus */
+// ─── Mapping helpers (DB row <-> app-shape object) ──────────────────────────
+
+/** stores row -> app Store object (camelCase, with `coords` for Leaflet) */
+function mapStoreRow(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    name: row.name,
+    type: row.type,
+    address: row.address ?? "",
+    ownerName: row.owner_name ?? "",
+    contactNumber: row.contact_number ?? "",
+    ownerId: row.owner_id,
+    ownerEmail: row.owner_email ?? "",
+    lat: row.latitude,
+    lng: row.longitude,
+    coords: [row.latitude, row.longitude],
+    status: row.status,
+    worstStatus: row.worst_status ?? "available",
+    rejectionReason: row.rejection_reason ?? null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+/** inventory row -> app Product object */
+function mapProductRow(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    storeId: row.store_id,
+    name: row.name,
+    category: row.category,
+    status: row.status,
+    lastUpdated: row.last_updated,
+  };
+}
+
+/** Lightweight marker row -> app MapMarker object */
+function mapMarkerRow(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    coords: [row.latitude, row.longitude],
+    worstStatus: row.worst_status ?? "available",
+  };
+}
+
+// ─── Public utility: relative time formatting ───────────────────────────────
+
+/**
+ * formatLastUpdated
+ * Formats a Supabase `timestamptz` (ISO string) into a short relative
+ * string like "Updated 2 mins ago". Falls back gracefully on bad input.
+ *
+ * @param {string|Date|null|undefined} timestamp
+ * @returns {string}
+ */
+export function formatLastUpdated(timestamp) {
+  if (!timestamp) return "Updated recently";
+
+  const date = timestamp instanceof Date ? timestamp : new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "Updated recently";
+
+  const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+
+  if (seconds < 30) return "Updated just now";
+  if (seconds < 60) return `Updated ${seconds} secs ago`;
+
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `Updated ${minutes} min${minutes !== 1 ? "s" : ""} ago`;
+
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `Updated ${hours} hr${hours !== 1 ? "s" : ""} ago`;
+
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `Updated ${days} day${days !== 1 ? "s" : ""} ago`;
+
+  return `Updated on ${date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: date.getFullYear() !== new Date().getFullYear() ? "numeric" : undefined,
+  })}`;
+}
+
+/**
+ * getWorstStatusForQuery
+ * Given a store's full inventory array and a search query, returns the
+ * worst status ("out" > "low" > "available") among matching products, or
+ * null if nothing matches. Used when you already have inventory loaded
+ * (e.g. inside an open StoreDetails sheet) — NOT for the map, which uses
+ * the server-side search_inventory() RPC instead (see searchInventory below).
+ *
+ * @param {Array} inventory
+ * @param {string} query
+ * @returns {"out"|"low"|"available"|null}
+ */
+export function getWorstStatusForQuery(inventory, query) {
+  const q = query.trim().toLowerCase();
+  if (!q) return null;
+
+  const matches = inventory.filter((p) => p.name.toLowerCase().includes(q));
+  if (matches.length === 0) return null;
+
+  if (matches.some((p) => p.status === "out")) return "out";
+  if (matches.some((p) => p.status === "low")) return "low";
+  return "available";
+}
+
+// ─── useMapMarkers ───────────────────────────────────────────────────────────
 
 /**
  * useMapMarkers
- * Lightweight hook for the public map. Selects ONLY the columns needed
- * to render a pin — never select('*') here, that's the #1 egress killer
- * once you have inventory join data on every row.
- *
- * @returns {{ markers: Array, loading: boolean, error: Error|null }}
+ * Minimal payload for the public map: id, name, coords, worstStatus.
+ * Never selects full inventory — that stays on-demand (see useStoreDetails).
  */
 export function useMapMarkers() {
   const [markers, setMarkers] = useState([]);
@@ -34,13 +134,13 @@ export function useMapMarkers() {
   const fetchMarkers = useCallback(async () => {
     const { data, error: fetchError } = await supabase
       .from("stores")
-      .select("id, name, latitude, longitude") // <-- explicit, minimal columns
+      .select("id, name, latitude, longitude, worst_status")
       .eq("status", "approved");
 
     if (fetchError) {
       setError(fetchError);
     } else {
-      setMarkers(data ?? []);
+      setMarkers((data ?? []).map(mapMarkerRow));
       setError(null);
     }
     setLoading(false);
@@ -49,21 +149,15 @@ export function useMapMarkers() {
   useEffect(() => {
     fetchMarkers();
 
-    // Realtime: only re-fetch the marker list when a store is
-    // inserted/updated/deleted — NOT on every inventory change
-    // (inventory changes don't move the pin, so don't re-run this query).
     const channel = supabase
       .channel("public-stores-markers")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "stores" },
-        () => {
-          fetchMarkers();
-        }
+        () => fetchMarkers()
       )
       .subscribe();
 
-    // Cleanup — critical to avoid leaked subscriptions / connection limits
     return () => {
       supabase.removeChannel(channel);
     };
@@ -72,23 +166,24 @@ export function useMapMarkers() {
   return { markers, loading, error };
 }
 
+// ─── useStoreDetails ─────────────────────────────────────────────────────────
+
 /**
  * useStoreDetails
- * Fetches the FULL store record + its inventory, only when storeId is set.
- * Call this when a resident taps a map pin — not on initial map load.
+ * Full store + inventory, fetched ONLY when storeId is set (i.e. a pin
+ * was tapped). Returns a single merged object shaped like your old
+ * Firestore `store` (with `.inventory` attached), so StoreDetails.jsx,
+ * ProductFormModal.jsx, etc. need no prop-shape changes.
  *
  * @param {string|null} storeId
- * @returns {{ store: Object|null, inventory: Array, loading: boolean }}
  */
 export function useStoreDetails(storeId) {
   const [store, setStore] = useState(null);
-  const [inventory, setInventory] = useState([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (!storeId) {
       setStore(null);
-      setInventory([]);
       return;
     }
 
@@ -96,31 +191,32 @@ export function useStoreDetails(storeId) {
     setLoading(true);
 
     async function load() {
-      const [{ data: storeData }, { data: inventoryData }] = await Promise.all([
+      const [{ data: storeRow }, { data: inventoryRows }] = await Promise.all([
         supabase
           .from("stores")
           .select(
-            "id, name, type, address, owner_name, contact_number, latitude, longitude, updated_at"
+            "id, name, type, address, owner_name, contact_number, owner_id, owner_email, latitude, longitude, status, worst_status, updated_at"
           )
           .eq("id", storeId)
           .single(),
         supabase
           .from("inventory")
-          .select("id, name, category, status, last_updated")
+          .select("id, store_id, name, category, status, last_updated")
           .eq("store_id", storeId),
       ]);
 
       if (!cancelled) {
-        setStore(storeData ?? null);
-        setInventory(inventoryData ?? []);
+        const mappedStore = mapStoreRow(storeRow);
+        if (mappedStore) {
+          mappedStore.inventory = (inventoryRows ?? []).map(mapProductRow);
+        }
+        setStore(mappedStore);
         setLoading(false);
       }
     }
 
     load();
 
-    // Realtime: watch ONLY this store's inventory while its detail
-    // sheet is open. Torn down the instant storeId changes or unmounts.
     const channel = supabase
       .channel(`store-inventory-${storeId}`)
       .on(
@@ -132,17 +228,18 @@ export function useStoreDetails(storeId) {
           filter: `store_id=eq.${storeId}`,
         },
         (payload) => {
-          setInventory((prev) => {
+          setStore((prev) => {
+            if (!prev) return prev;
+            const inventory = prev.inventory ?? [];
             if (payload.eventType === "DELETE") {
-              return prev.filter((item) => item.id !== payload.old.id);
+              return { ...prev, inventory: inventory.filter((p) => p.id !== payload.old.id) };
             }
-            const exists = prev.some((item) => item.id === payload.new.id);
-            if (exists) {
-              return prev.map((item) =>
-                item.id === payload.new.id ? payload.new : item
-              );
-            }
-            return [...prev, payload.new];
+            const mapped = mapProductRow(payload.new);
+            const exists = inventory.some((p) => p.id === mapped.id);
+            const nextInventory = exists
+              ? inventory.map((p) => (p.id === mapped.id ? mapped : p))
+              : [...inventory, mapped];
+            return { ...prev, inventory: nextInventory };
           });
         }
       )
@@ -154,32 +251,104 @@ export function useStoreDetails(storeId) {
     };
   }, [storeId]);
 
-  return { store, inventory, loading };
+  return { store, loading };
 }
+
+// ─── useMyStore (owner's own store, any status) ─────────────────────────────
+
+/**
+ * useMyStore
+ * For the Owner Dashboard: finds the store owned by the logged-in user
+ * (regardless of approval status — pending/approved/rejected all return
+ * here), with realtime updates (e.g. when a barangay official approves it).
+ *
+ * @param {string|null} userId — supabase auth user id (user.id)
+ */
+export function useMyStore(userId) {
+  const [store, setStore] = useState(null);
+  const [checked, setChecked] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  const fetchStore = useCallback(async () => {
+    if (!userId) {
+      setStore(null);
+      setChecked(true);
+      return;
+    }
+    setLoading(true);
+    const { data, error } = await supabase
+      .from("stores")
+      .select(
+        "id, name, type, address, owner_name, contact_number, owner_id, owner_email, latitude, longitude, status, worst_status, rejection_reason, updated_at"
+      )
+      .eq("owner_id", userId)
+      .maybeSingle();
+
+    if (error) {
+      console.error("useMyStore fetch failed:", error);
+      setStore(null);
+    } else {
+      setStore(mapStoreRow(data));
+    }
+    setChecked(true);
+    setLoading(false);
+  }, [userId]);
+
+  useEffect(() => {
+    if (!userId) {
+      setStore(null);
+      setChecked(true);
+      return;
+    }
+
+    fetchStore();
+
+    const channel = supabase
+      .channel(`my-store-${userId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "stores", filter: `owner_id=eq.${userId}` },
+        () => fetchStore()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [userId, fetchStore]);
+
+  return { store, checked, loading, refetch: fetchStore };
+}
+
+// ─── useOwnerInventory ───────────────────────────────────────────────────────
 
 /**
  * useOwnerInventory
- * For the Owner Dashboard: real-time inventory for the logged-in
- * owner's own store, plus mutation helpers.
- *
- * @param {string|null} storeId — the owner's own store id
+ * Realtime inventory list + mutation helpers for the Owner Dashboard.
+ * @param {string|null} storeId
  */
 export function useOwnerInventory(storeId) {
   const [inventory, setInventory] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!storeId) return;
+    if (!storeId) {
+      setInventory([]);
+      setLoading(false);
+      return;
+    }
 
     let isMounted = true;
+    setLoading(true);
 
     supabase
       .from("inventory")
-      .select("id, name, category, status, last_updated")
+      .select("id, store_id, name, category, status, last_updated")
       .eq("store_id", storeId)
+      .order("name", { ascending: true })
       .then(({ data }) => {
         if (isMounted) {
-          setInventory(data ?? []);
+          setInventory((data ?? []).map(mapProductRow));
           setLoading(false);
         }
       });
@@ -188,24 +357,17 @@ export function useOwnerInventory(storeId) {
       .channel(`owner-inventory-${storeId}`)
       .on(
         "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "inventory",
-          filter: `store_id=eq.${storeId}`,
-        },
+        { event: "*", schema: "public", table: "inventory", filter: `store_id=eq.${storeId}` },
         (payload) => {
           setInventory((prev) => {
             if (payload.eventType === "DELETE") {
-              return prev.filter((item) => item.id !== payload.old.id);
+              return prev.filter((p) => p.id !== payload.old.id);
             }
-            const exists = prev.some((item) => item.id === payload.new.id);
-            if (exists) {
-              return prev.map((item) =>
-                item.id === payload.new.id ? payload.new : item
-              );
-            }
-            return [...prev, payload.new];
+            const mapped = mapProductRow(payload.new);
+            const exists = prev.some((p) => p.id === mapped.id);
+            return exists
+              ? prev.map((p) => (p.id === mapped.id ? mapped : p))
+              : [...prev, mapped];
           });
         }
       )
@@ -217,64 +379,46 @@ export function useOwnerInventory(storeId) {
     };
   }, [storeId]);
 
-  const addProduct = useCallback(
-    async ({ name, category, status = "available" }) => {
-      return supabase.from("inventory").insert({
-        store_id: storeId,
-        name,
-        category,
-        status,
-      });
-    },
-    [storeId]
-  );
-
-  const updateProductStatus = useCallback(
-    async (productId, status) => {
-      const VALID = ["available", "low", "out"];
-      if (!VALID.includes(status)) {
-        console.error(`Invalid status "${status}". Must be one of: ${VALID.join(", ")}`);
-        return;
-      }
-      return supabase
-        .from("inventory")
-        .update({ status })
-        .eq("id", productId);
-    },
-    []
-  );
-
-  const deleteProduct = useCallback(async (productId) => {
-    return supabase.from("inventory").delete().eq("id", productId);
+  const updateProductStatus = useCallback(async (productId, status) => {
+    const VALID = ["available", "low", "out"];
+    if (!VALID.includes(status)) {
+      console.error(`Invalid status "${status}". Must be one of: ${VALID.join(", ")}`);
+      return { error: new Error("invalid status") };
+    }
+    return supabase.from("inventory").update({ status }).eq("id", productId);
   }, []);
 
-  return { inventory, loading, addProduct, updateProductStatus, deleteProduct };
+  return { inventory, loading, updateProductStatus };
 }
+
+// ─── One-shot server-side helpers (RPCs) ────────────────────────────────────
 
 /**
  * searchInventory
- * One-shot helper for the product search bar — uses the search_inventory()
- * Postgres function (see 02_functions_and_triggers.sql) so the ILIKE
- * filtering and the approved-store join happen server-side, not client-side.
- *
+ * Runs the search_inventory() Postgres function — filtering happens in
+ * the DB, not in the browser. Returns rows shaped for the map/search UI.
  * @param {string} term
  */
 export async function searchInventory(term) {
-  const { data, error } = await supabase.rpc("search_inventory", {
-    search_term: term,
-  });
+  if (!term || !term.trim()) return [];
+  const { data, error } = await supabase.rpc("search_inventory", { search_term: term.trim() });
   if (error) {
     console.error("searchInventory failed:", error);
     return [];
   }
-  return data ?? [];
+  return (data ?? []).map((row) => ({
+    storeId: row.store_id,
+    storeName: row.store_name,
+    coords: [row.latitude, row.longitude],
+    productId: row.product_id,
+    productName: row.product_name,
+    category: row.category,
+    status: row.status,
+  }));
 }
 
 /**
- * nearbyStores
- * One-shot helper for "stores near me" — uses the nearby_stores() Postgres
- * function so distance sorting happens in Postgres, not in the browser.
- *
+ * nearbyStores — "stores near me", sorted server-side by distance.
  * @param {number} lat
  * @param {number} lng
  * @param {number} radiusMeters
@@ -289,5 +433,62 @@ export async function nearbyStores(lat, lng, radiusMeters = 5000) {
     console.error("nearbyStores failed:", error);
     return [];
   }
-  return data ?? [];
+  return (data ?? []).map((row) => ({
+    id: row.id,
+    name: row.name,
+    type: row.type,
+    coords: [row.latitude, row.longitude],
+    distanceMeters: row.distance_m,
+  }));
+}
+
+/**
+ * useDebouncedSearchMatches
+ * Convenience hook for App.jsx: debounces `searchQuery`, calls
+ * searchInventory(), and returns a Map<storeId, { count, worstStatus }>
+ * that MapContainer/StoreMarker can use to highlight/color pins without
+ * ever loading full inventory into the client.
+ *
+ * @param {string} searchQuery
+ * @param {number} debounceMs
+ */
+export function useDebouncedSearchMatches(searchQuery, debounceMs = 300) {
+  const [matches, setMatches] = useState(new Map());
+  const [searching, setSearching] = useState(false);
+  const timeoutRef = useRef(null);
+
+  useEffect(() => {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+
+    if (!searchQuery.trim()) {
+      setMatches(new Map());
+      setSearching(false);
+      return;
+    }
+
+    setSearching(true);
+    timeoutRef.current = setTimeout(async () => {
+      const results = await searchInventory(searchQuery);
+      const byStore = new Map();
+      const severity = { out: 0, low: 1, available: 2 };
+
+      for (const r of results) {
+        const existing = byStore.get(r.storeId);
+        if (!existing) {
+          byStore.set(r.storeId, { count: 1, worstStatus: r.status });
+        } else {
+          existing.count += 1;
+          if (severity[r.status] < severity[existing.worstStatus]) {
+            existing.worstStatus = r.status;
+          }
+        }
+      }
+      setMatches(byStore);
+      setSearching(false);
+    }, debounceMs);
+
+    return () => clearTimeout(timeoutRef.current);
+  }, [searchQuery, debounceMs]);
+
+  return { matches, searching };
 }
