@@ -3,9 +3,13 @@
 // Used by OwnerDashboard — receives an `initialData` prop that is null
 // when adding a new product, or a product object when editing.
 //
-// Firestore operations:
-//   ADD  → addDoc(collection(db, "Stores", storeId, "Inventory"), payload)
-//   EDIT → updateDoc(doc(db, "Stores", storeId, "Inventory", productId), payload)
+// Supabase operations:
+//   ADD  → supabase.from('inventory').insert({ store_id, name, category, status })
+//   EDIT → supabase.from('inventory').update({ name, category, status }).eq('id', productId)
+//
+// Note: we don't send last_updated manually — the `inventory_touch_last_updated`
+// trigger (see 02_functions_and_triggers.sql) bumps it automatically on update,
+// and it defaults to now() on insert.
 
 import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -17,14 +21,7 @@ import {
   Save,
   Plus,
 } from "lucide-react";
-import {
-  collection,
-  addDoc,
-  doc,
-  updateDoc,
-  serverTimestamp,
-} from "firebase/firestore";
-import { db } from "../firebase/config";
+import { supabase } from "../config/supabaseClient";
 
 // ─── Predefined categories matching your capstone domain ─────────────────────
 const CATEGORIES = [
@@ -95,7 +92,7 @@ const sheetVariants = {
  * @typedef {Object} ProductFormModalProps
  * @property {boolean}       isOpen
  * @property {Function}      onClose
- * @property {string}        storeId      — Firestore store document ID
+ * @property {string}        storeId      — the store this product belongs to
  * @property {Object|null}   initialData  — null = Add mode, object = Edit mode
  */
 
@@ -166,31 +163,33 @@ export default function ProductFormModal({
     const finalCategory =
       category === "Other" ? customCategory.trim() : category;
 
-    const payload = {
-      name: name.trim(),
-      category: finalCategory,
-      status,
-      lastUpdated: serverTimestamp(),
-    };
-
     try {
       if (isEditMode) {
-        // EDIT: update the existing document
-        const productRef = doc(
-          db,
-          "Stores",
-          storeId,
-          "Inventory",
-          initialData.id
-        );
-        await updateDoc(productRef, payload);
+        // EDIT: update the existing row (last_updated bumped by trigger)
+        const { error: updateError } = await supabase
+          .from("inventory")
+          .update({
+            name: name.trim(),
+            category: finalCategory,
+            status,
+          })
+          .eq("id", initialData.id);
+
+        if (updateError) throw updateError;
       } else {
-        // ADD: create a new document with an auto-generated ID
-        await addDoc(collection(db, "Stores", storeId, "Inventory"), payload);
+        // ADD: insert a new row (id + last_updated default automatically)
+        const { error: insertError } = await supabase.from("inventory").insert({
+          store_id: storeId,
+          name: name.trim(),
+          category: finalCategory,
+          status,
+        });
+
+        if (insertError) throw insertError;
       }
       onClose();
     } catch (err) {
-      console.error("Firestore write failed:", err);
+      console.error("Supabase write failed:", err);
       setError("Failed to save. Please check your connection and try again.");
     } finally {
       setSaving(false);
