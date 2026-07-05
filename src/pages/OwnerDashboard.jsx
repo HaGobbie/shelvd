@@ -1,13 +1,14 @@
 // src/pages/OwnerDashboard.jsx
 // Full Owner Dashboard — now includes:
-//   ✅ Google Sign-In + Email/Password login
+//   ✅ Google Sign-In + Email/Password login (Supabase Auth)
 //   ✅ Auto-routing: no store found → StoreRegistrationForm
-//   ✅ Real-time Inventory listener
+//   ✅ Real-time Inventory listener (Supabase Realtime, scoped to this store)
 //   ✅ Status toggle, Add, Edit, Delete products
-//   ✅ All product writes update `lastUpdated` via serverTimestamp()
-//   ✅ Store document `updatedAt` field is bumped on every product write
+//   ✅ inventory.last_updated bumped automatically by a Postgres trigger
+//   ✅ stores.updated_at bumped automatically by a Postgres trigger on
+//      any inventory change (see 02_functions_and_triggers.sql)
 
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   PackageCheck,
@@ -23,32 +24,13 @@ import {
   Trash2,
   Settings,
 } from "lucide-react";
-import {
-  signInWithEmailAndPassword,
-  signInWithPopup,
-  GoogleAuthProvider,
-  signOut,
-  onAuthStateChanged,
-} from "firebase/auth";
-import {
-  collection,
-  query,
-  where,
-  onSnapshot,
-  doc,
-  updateDoc,
-  serverTimestamp,
-} from "firebase/firestore";
-import { auth, db } from "../firebase/config";
-import { formatLastUpdated } from "../hooks/useStores";
+import { supabase } from "../config/supabaseClient";
+import { useAuth } from "../hooks/useAuth";
+import { useMyStore, useOwnerInventory, formatLastUpdated } from "../hooks/useStores";
 import ProductFormModal from "../components/ProductFormModal";
 import ConfirmDeleteModal from "../components/ConfirmDeleteModal";
 import StoreRegistrationForm from "../components/StoreRegistrationForm";
 import StoreEditModal from "../components/StoreEditModal";
-
-const googleProvider = new GoogleAuthProvider();
-googleProvider.addScope("email");
-googleProvider.addScope("profile");
 
 const STATUS_OPTIONS = [
   { value: "available", label: "Available",    Icon: PackageCheck, color: "#2ECC71", bg: "rgba(46,204,113,0.1)",  border: "rgba(46,204,113,0.5)"  },
@@ -78,13 +60,13 @@ function StatusRadioGroup({ currentStatus, onChange, productId }) {
   );
 }
 
-function ProductCard({ product, storeId, onStatusChange, onEdit, onDelete }) {
+function ProductCard({ product, onStatusChange, onEdit, onDelete }) {
   const [expanded, setExpanded] = useState(false);
   const [localSaved, setLocalSaved] = useState(false);
   const cfg = STATUS_OPTIONS.find((o) => o.value === product.status);
 
   const handleStatusChange = async (pid, newStatus) => {
-    await onStatusChange(storeId, pid, newStatus);
+    await onStatusChange(pid, newStatus);
     setLocalSaved(true);
     setTimeout(() => setLocalSaved(false), 1800);
   };
@@ -124,7 +106,7 @@ function ProductCard({ product, storeId, onStatusChange, onEdit, onDelete }) {
             initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.22 }}>
             <div className="product-card__timestamp">
-              <Clock size={12} />&nbsp;Last updated: {formatLastUpdated(product.lastUpdated)}
+              <Clock size={12} />&nbsp;{formatLastUpdated(product.lastUpdated)}
             </div>
             <StatusRadioGroup currentStatus={product.status} productId={product.id} onChange={handleStatusChange} />
           </motion.div>
@@ -134,7 +116,7 @@ function ProductCard({ product, storeId, onStatusChange, onEdit, onDelete }) {
   );
 }
 
-// ─── Login screen with Google + Email ────────────────────────────────────────
+// ─── Login screen with Google + Email (Supabase Auth) ────────────────────────
 function LoginScreen() {
   const [showEmailForm, setShowEmailForm] = useState(false);
   const [email, setEmail]         = useState("");
@@ -145,30 +127,31 @@ function LoginScreen() {
 
   const handleGoogle = async () => {
     setError(""); setGLoading(true);
-    try {
-      await signInWithPopup(auth, googleProvider);
-    } catch (err) {
-      if (err.code === "auth/popup-blocked") {
-        setError("Popup was blocked by your browser. Please allow popups for this site.");
-      } else if (err.code !== "auth/popup-closed-by-user") {
-        setError("Google sign-in failed. Please try again.");
-      }
-    } finally { setGLoading(false); }
+    // Supabase redirects the whole page to Google, then back to this URL —
+    // there's no popup, so we don't clear gLoading in a `finally` here.
+    const { error: oauthError } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: window.location.origin + window.location.pathname + "#/dashboard" },
+    });
+    if (oauthError) {
+      setError("Google sign-in failed. Please try again.");
+      setGLoading(false);
+    }
   };
 
   const handleEmail = async (e) => {
     e.preventDefault(); setError(""); setLoading(true);
-    try {
-      await signInWithEmailAndPassword(auth, email, password);
-    } catch (err) {
-      if (err.code === "auth/invalid-credential" || err.code === "auth/wrong-password" || err.code === "auth/user-not-found") {
+    const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+    if (signInError) {
+      if (signInError.message.toLowerCase().includes("invalid login credentials")) {
         setError("Incorrect email or password.");
-      } else if (err.code === "auth/too-many-requests") {
+      } else if (signInError.message.toLowerCase().includes("rate limit")) {
         setError("Too many attempts. Please wait before trying again.");
       } else {
         setError("Sign-in failed. Check your connection and try again.");
       }
-    } finally { setLoading(false); }
+    }
+    setLoading(false);
   };
 
   return (
@@ -240,12 +223,11 @@ function LoginScreen() {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function OwnerDashboard() {
-  const [user, setUser]                       = useState(null);
-  const [authLoading, setAuthLoading]         = useState(true);
-  const [myStore, setMyStore]                 = useState(null);
-  const [storeChecked, setStoreChecked]       = useState(false);
-  const [inventory, setInventory]             = useState([]);
-  const [storeLoading, setStoreLoading]       = useState(false);
+  const { user, loading: authLoading } = useAuth();
+
+  const { store: myStore, checked: storeChecked, loading: storeLoading } = useMyStore(user?.id ?? null);
+  const { inventory, updateProductStatus } = useOwnerInventory(myStore?.id ?? null);
+
   const [filterQuery, setFilterQuery]         = useState("");
   const [formModalOpen, setFormModalOpen]     = useState(false);
   const [editingProduct, setEditingProduct]   = useState(null);
@@ -253,67 +235,9 @@ export default function OwnerDashboard() {
   const [deletingProduct, setDeletingProduct] = useState(null);
   const [storeEditOpen, setStoreEditOpen]     = useState(false);
 
-  // Auth
-  useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-      setAuthLoading(false);
-      if (!u) { setMyStore(null); setStoreChecked(false); setInventory([]); }
-    });
-    return () => unsub();
-  }, []);
-
-  // Store lookup
-  useEffect(() => {
-    if (!user) return;
-    setStoreLoading(true);
-    const q = query(collection(db, "Stores"), where("ownerId", "==", user.uid));
-    const unsub = onSnapshot(q, (snap) => {
-      if (snap.empty) {
-        setMyStore(null);
-      } else {
-        const d = snap.docs[0];
-        const raw = d.data();
-        setMyStore({ id: d.id, ...raw, coords: [raw.lat ?? 0, raw.lng ?? 0] });
-      }
-      setStoreChecked(true);
-      setStoreLoading(false);
-    });
-    return () => unsub();
-  }, [user]);
-
-  // Inventory listener
-  useEffect(() => {
-    if (!myStore) return;
-    const unsub = onSnapshot(collection(db, "Stores", myStore.id, "Inventory"), (snap) => {
-      const items = snap.docs.map((d) => {
-        const raw = d.data();
-        return {
-          id: d.id,
-          name: raw.name ?? "",
-          category: raw.category ?? "",
-          status: raw.status ?? "available",
-          lastUpdated: raw.lastUpdated?.toDate?.().toISOString() ?? new Date().toISOString(),
-        };
-      });
-      items.sort((a, b) => a.name.localeCompare(b.name));
-      setInventory(items);
-    });
-    return () => unsub();
-  }, [myStore]);
-
-  // Status toggle — also bumps store updatedAt
-  const handleStatusChange = async (storeId, productId, status) => {
-    if (!["available", "low", "out"].includes(status)) return;
-    setInventory((prev) =>
-      prev.map((p) => p.id === productId ? { ...p, status, lastUpdated: new Date().toISOString() } : p)
-    );
-    try {
-      await updateDoc(doc(db, "Stores", storeId, "Inventory", productId), {
-        status, lastUpdated: serverTimestamp(),
-      });
-      await updateDoc(doc(db, "Stores", storeId), { updatedAt: serverTimestamp() });
-    } catch (err) { console.error("Status update failed:", err); }
+  const handleStatusChange = async (productId, status) => {
+    const { error } = await updateProductStatus(productId, status);
+    if (error) console.error("Status update failed:", error);
   };
 
   const openAddModal    = ()   => { setEditingProduct(null);    setFormModalOpen(true); };
@@ -349,8 +273,35 @@ export default function OwnerDashboard() {
         <div style={{ textAlign: "center", padding: "16px 0 32px" }}>
           <button type="button"
             style={{ fontSize: 13, color: "var(--color-text-muted)", textDecoration: "underline" }}
-            onClick={() => signOut(auth)}>
+            onClick={() => supabase.auth.signOut()}>
             Sign out and use a different account
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Store exists but is still pending / was rejected — inventory management
+  // only makes sense once a barangay official has approved the listing.
+  if (myStore.status !== "approved") {
+    const isRejected = myStore.status === "rejected";
+    return (
+      <div className="login-screen">
+        <div className="login-card" style={{ textAlign: "center" }}>
+          <div className="login-card__logo">
+            {isRejected ? <AlertTriangle size={36} color="#E74C3C" /> : <Clock size={36} />}
+          </div>
+          <h1 className="login-card__title">
+            {isRejected ? "Registration Rejected" : "Pending Approval"}
+          </h1>
+          <p className="login-card__subtitle">
+            {isRejected
+              ? (myStore.rejectionReason || "Your store registration was not approved. Please contact your barangay office for details.")
+              : "Your store is awaiting review by a barangay official. This page will update automatically once it's approved."}
+          </p>
+          <button type="button" className="dashboard-header__logout" style={{ marginTop: 16 }}
+            onClick={() => supabase.auth.signOut()}>
+            Sign Out
           </button>
         </div>
       </div>
@@ -381,7 +332,7 @@ export default function OwnerDashboard() {
             <Settings size={16} strokeWidth={2} />
             <span>Edit Store</span>
           </button>
-          <button className="dashboard-header__logout" onClick={() => signOut(auth)} type="button">Sign Out</button>
+          <button className="dashboard-header__logout" onClick={() => supabase.auth.signOut()} type="button">Sign Out</button>
         </div>
       </header>
 
@@ -430,7 +381,7 @@ export default function OwnerDashboard() {
         <div className="dashboard-product-list">
           <AnimatePresence>
             {filteredInventory.map((product) => (
-              <ProductCard key={product.id} product={product} storeId={myStore.id}
+              <ProductCard key={product.id} product={product}
                 onStatusChange={handleStatusChange} onEdit={openEditModal} onDelete={openDeleteModal} />
             ))}
           </AnimatePresence>
