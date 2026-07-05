@@ -1,0 +1,31 @@
+{
+  "name": "gis-community-platform",
+  "private": true,
+  "version": "0.1.0",
+  "description": "GIS-Based Platform for Real-Time Essential Resource Localization — Capstone Project, Davao Vision Colleges",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint src --ext js,jsx"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.110.0",
+    "framer-motion": "^11.18.2",
+    "leaflet": "^1.9.4",
+    "lucide-react": "^0.395.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-leaflet": "^4.2.1"
+  },
+  "devDependencies": {
+    "@types/leaflet": "^1.9.12",
+    "@vitejs/plugin-react": "^4.3.1",
+    "eslint": "^8.57.0",
+    "eslint-plugin-react": "^7.34.2",
+    "eslint-plugin-react-hooks": "^4.6.2",
+    "vite": "^5.3.1",
+    "vite-plugin-pwa": "^0.20.5"
+  }
+}
