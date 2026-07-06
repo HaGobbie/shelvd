@@ -8,8 +8,10 @@
 // `store.inventory` array that Firestore preloaded for every store. That
 // data is no longer fetched for the whole map (useMapMarkers() only
 // returns id/name/coords/worstStatus — see src/hooks/useStores.js), so:
-//   - With no search active: color comes from `marker.worstStatus`, a
-//     column maintained server-side by a Postgres trigger.
+//   - With no search active: pins are NEUTRAL (a single brand color, no
+//     status meaning) — a status color is only meaningful in response to
+//     a search, not as a constant ambient judgment on a store's overall
+//     stock.
 //   - With a search active: color/highlight comes from `searchMatches`,
 //     a Map<storeId, { count, worstStatus }> produced by the
 //     useDebouncedSearchMatches() hook in App.jsx, which calls the
@@ -87,13 +89,18 @@ export default function MapContainer({
 }) {
   const searchActive = searchQuery.trim().length > 0;
 
-  // Derive display data per marker from the current search matches
+  // Derive display data per marker from the current search matches.
+  // IMPORTANT: pins are neutral (no status color) when no search is
+  // active — they only take on traffic-light coloring once the person is
+  // actually searching for a product, matching what a status color is
+  // meant to communicate ("this store has/doesn't have what you searched
+  // for"), not a constant ambient judgment on every store's overall stock.
   const markerDisplayData = useMemo(() => {
     return markers.map((marker) => {
       if (!searchActive) {
         return {
           marker,
-          displayStatus: marker.worstStatus,
+          displayStatus: null,
           hasMatch: true,
           matchCount: 0,
         };
