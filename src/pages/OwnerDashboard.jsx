@@ -38,6 +38,7 @@ import ProductFormModal from "../components/ProductFormModal";
 import ConfirmDeleteModal from "../components/ConfirmDeleteModal";
 import StoreRegistrationForm from "../components/StoreRegistrationForm";
 import StoreEditModal from "../components/StoreEditModal";
+import BulkImportModal from "../components/BulkImportModal";
 
 const STATUS_OPTIONS = [
   { value: "available", label: "Available",    Icon: PackageCheck, color: "#2ECC71", bg: "rgba(46,204,113,0.1)",  border: "rgba(46,204,113,0.5)"  },
@@ -426,6 +427,7 @@ export default function OwnerDashboard({ session }) {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [deletingProduct, setDeletingProduct] = useState(null);
   const [storeEditOpen, setStoreEditOpen]     = useState(false);
+  const [bulkImportOpen, setBulkImportOpen]   = useState(false);
 
   const handleStatusChange = async (productId, status) => {
     const { error } = await updateProductStatus(productId, status);
@@ -560,6 +562,16 @@ export default function OwnerDashboard({ session }) {
           </button>
         </div>
 
+        <div style={{ marginBottom: 12 }}>
+          <button
+            type="button"
+            className="dashboard-header__edit-store"
+            onClick={() => setBulkImportOpen(true)}
+          >
+            Import from CSV
+          </button>
+        </div>
+
         {inventory.length > 4 && (
           <div className="dashboard-filter">
             <input type="search" className="dashboard-filter__input"
@@ -607,6 +619,11 @@ export default function OwnerDashboard({ session }) {
         isOpen={storeEditOpen}
         onClose={() => setStoreEditOpen(false)}
         store={myStore}
+      />
+      <BulkImportModal
+        isOpen={bulkImportOpen}
+        onClose={() => setBulkImportOpen(false)}
+        storeId={myStore?.id}
       />
       <DeleteStoreConfirm
         isOpen={deleteStoreConfirmOpen}
