@@ -75,6 +75,10 @@ export default function App() {
   // ─── Global Supabase auth session ────────────────────────────────────────
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
+  // Set only if we detect a token in the hash but never manage to resolve
+  // a session from it within a reasonable time — the actual gap this
+  // whole block exists to close (see comment below).
+  const [oauthStuckError, setOauthStuckError] = useState(null);
 
   /**
    * If a session just came in AND the URL hash still holds the raw OAuth
@@ -96,6 +100,7 @@ export default function App() {
       if (currentSession && window.location.hash.includes("access_token")) {
         window.location.hash = "/dashboard";
         setRoute("#/dashboard");
+        setOauthStuckError(null);
       }
     },
     [setRoute]
@@ -104,11 +109,31 @@ export default function App() {
   useEffect(() => {
     let isMounted = true;
 
+    // Safety valve: if the hash contains a token but we never end up with
+    // a session from it (Supabase rejected the redirect, a network hiccup,
+    // a misconfigured Redirect URL allowlist, etc.), the loading guard
+    // below would otherwise spin forever with zero visibility into why.
+    // This gives it a hard ceiling and turns silence into a visible,
+    // actionable error instead.
+    const stuckTimer = window.location.hash.includes("access_token")
+      ? window.setTimeout(() => {
+          if (isMounted) {
+            setOauthStuckError(
+              "Sign-in is taking longer than expected. This can happen if the " +
+                "redirect URL isn't in Supabase's allowed Redirect URLs list."
+            );
+          }
+        }, 8000)
+      : null;
+
     // Resolve whatever session already exists (page load, refresh, or the
     // tail end of an OAuth redirect that Supabase-js has already parsed
     // out of the URL by the time this promise resolves).
-    supabase.auth.getSession().then(({ data: { session: initialSession } }) => {
+    supabase.auth.getSession().then(({ data: { session: initialSession }, error }) => {
       if (!isMounted) return;
+      if (error) {
+        console.error("supabase.auth.getSession() error:", error);
+      }
       setSession(initialSession);
       setAuthLoading(false);
       redirectFromOAuthHashIfNeeded(initialSession);
@@ -118,7 +143,8 @@ export default function App() {
     // of the app's lifetime.
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, newSession) => {
+    } = supabase.auth.onAuthStateChange((event, newSession) => {
+      console.log("[auth]", event, newSession ? `session for ${newSession.user?.email}` : "no session");
       setSession(newSession);
       setAuthLoading(false);
       redirectFromOAuthHashIfNeeded(newSession);
@@ -126,6 +152,7 @@ export default function App() {
 
     return () => {
       isMounted = false;
+      if (stuckTimer) window.clearTimeout(stuckTimer);
       subscription.unsubscribe();
     };
   }, [redirectFromOAuthHashIfNeeded]);
@@ -157,8 +184,45 @@ export default function App() {
   // ─── Guard: still resolving auth, or hash still holds a raw OAuth token ──
   // Covers the brief window before redirectFromOAuthHashIfNeeded has run
   // (e.g. auth is still loading on first paint) so we never flash the
-  // public map or a broken route mid-redirect.
+  // public map or a broken route mid-redirect. If oauthStuckError is set
+  // (see the timeout in the effect above), we break out of the spinner
+  // entirely and show something actionable instead of hanging forever.
   const hashHasPendingOAuthToken = window.location.hash.includes("access_token");
+
+  if (oauthStuckError) {
+    return (
+      <div
+        className="app-container"
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          minHeight: "100dvh",
+          padding: 24,
+          textAlign: "center",
+          gap: 12,
+        }}
+      >
+        <p style={{ maxWidth: 360, color: "var(--color-text-secondary, #555)" }}>
+          {oauthStuckError}
+        </p>
+        <a
+          href={window.location.origin + window.location.pathname}
+          style={{
+            background: "var(--color-brand-primary)",
+            color: "#fff",
+            padding: "10px 20px",
+            borderRadius: "var(--radius-pill, 999px)",
+            fontWeight: 700,
+            textDecoration: "none",
+          }}
+        >
+          Start Over
+        </a>
+      </div>
+    );
+  }
 
   if (authLoading || hashHasPendingOAuthToken) {
     return (
@@ -179,7 +243,22 @@ export default function App() {
   // ─── Owner Dashboard route ──────────────────────────────────────────────
   if (route === "#/dashboard") {
     return (
-      <div className="app-container">
+      // NOTE: .app-container is shared with the full-bleed map view, which
+      // needs a fixed, non-scrolling viewport (so Leaflet has a stable box
+      // to measure). The dashboard/registration flow needs the opposite —
+      // a normal, scrollable page. Rather than touching the shared class
+      // (which the map still depends on), we override it here with inline
+      // styles so this route gets natural document flow and scrolling
+      // regardless of what .app-container's own rules are.
+      <div
+        className="app-container"
+        style={{
+          position: "static",
+          height: "auto",
+          minHeight: "100dvh",
+          overflow: "visible",
+        }}
+      >
         <OwnerDashboard session={session} />
         {/* Nav back to map */}
         <a
