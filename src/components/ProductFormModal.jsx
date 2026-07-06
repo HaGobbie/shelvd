@@ -4,8 +4,8 @@
 // when adding a new product, or a product object when editing.
 //
 // Supabase operations:
-//   ADD  → supabase.from('inventory').insert({ store_id, name, category, status })
-//   EDIT → supabase.from('inventory').update({ name, category, status }).eq('id', productId)
+//   ADD  → supabase.from('inventory').insert({ store_id, name, category, price, status })
+//   EDIT → supabase.from('inventory').update({ name, category, price, status }).eq('id', productId)
 //
 // Note: we don't send last_updated manually — the `inventory_touch_last_updated`
 // trigger (see 02_functions_and_triggers.sql) bumps it automatically on update,
@@ -114,6 +114,7 @@ export default function ProductFormModal({
   // ─── Form state ────────────────────────────────────────────────────────────
   const [name, setName]           = useState("");
   const [category, setCategory]   = useState(CATEGORIES[0]);
+  const [price, setPrice]         = useState("");
   const [status, setStatus]       = useState("available");
   const [customCategory, setCustomCategory] = useState("");
   const [saving, setSaving]       = useState(false);
@@ -126,6 +127,11 @@ export default function ProductFormModal({
       if (isEditMode && initialData) {
         setName(initialData.name ?? "");
         setStatus(initialData.status ?? "available");
+        setPrice(
+          initialData.price !== null && initialData.price !== undefined
+            ? String(initialData.price)
+            : ""
+        );
         // If the stored category matches a preset, select it; otherwise use "Other"
         const match = CATEGORIES.includes(initialData.category);
         setCategory(match ? initialData.category : "Other");
@@ -133,6 +139,7 @@ export default function ProductFormModal({
       } else {
         setName("");
         setCategory(CATEGORIES[0]);
+        setPrice("");
         setStatus("available");
         setCustomCategory("");
       }
@@ -148,6 +155,10 @@ export default function ProductFormModal({
     if (name.trim().length > 80) return "Product name must be 80 characters or fewer.";
     if (category === "Other" && !customCategory.trim())
       return "Please enter a custom category.";
+    if (price.trim() === "") return "Price is required.";
+    const priceNum = Number(price);
+    if (Number.isNaN(priceNum)) return "Price must be a valid number.";
+    if (priceNum < 0) return "Price cannot be negative.";
     return null;
   };
 
@@ -162,6 +173,7 @@ export default function ProductFormModal({
 
     const finalCategory =
       category === "Other" ? customCategory.trim() : category;
+    const finalPrice = Number(price);
 
     try {
       if (isEditMode) {
@@ -171,6 +183,7 @@ export default function ProductFormModal({
           .update({
             name: name.trim(),
             category: finalCategory,
+            price: finalPrice,
             status,
           })
           .eq("id", initialData.id);
@@ -182,6 +195,7 @@ export default function ProductFormModal({
           store_id: storeId,
           name: name.trim(),
           category: finalCategory,
+          price: finalPrice,
           status,
         });
 
@@ -314,6 +328,24 @@ export default function ProductFormModal({
                       </motion.div>
                     )}
                   </AnimatePresence>
+                </div>
+
+                {/* ── Price ── */}
+                <div className="pform__field">
+                  <label className="pform__label" htmlFor="pform-price">
+                    Price (₱) <span className="pform__required">*</span>
+                  </label>
+                  <input
+                    id="pform-price"
+                    className="pform__input"
+                    type="number"
+                    inputMode="decimal"
+                    min="0"
+                    step="0.01"
+                    placeholder="0.00"
+                    value={price}
+                    onChange={(e) => setPrice(e.target.value)}
+                  />
                 </div>
 
                 {/* ── Status ── */}
