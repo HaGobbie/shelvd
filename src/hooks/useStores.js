@@ -254,24 +254,26 @@ export function useStoreDetails(storeId) {
   return { store, loading };
 }
 
-// ─── useMyStore (owner's own store, any status) ─────────────────────────────
+// ─── useMyStores (all stores owned by this account, any status) ────────────
 
 /**
- * useMyStore
- * For the Owner Dashboard: finds the store owned by the logged-in user
+ * useMyStores
+ * For the Owner Dashboard: finds ALL stores owned by the logged-in user
  * (regardless of approval status — pending/approved/rejected all return
- * here), with realtime updates (e.g. when a barangay official approves it).
+ * here), with realtime updates (e.g. when a barangay official approves
+ * one, or another tab adds/removes a store). Supports multiple stores
+ * per account.
  *
  * @param {string|null} userId — supabase auth user id (user.id)
  */
-export function useMyStore(userId) {
-  const [store, setStore] = useState(null);
+export function useMyStores(userId) {
+  const [stores, setStores] = useState([]);
   const [checked, setChecked] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  const fetchStore = useCallback(async () => {
+  const fetchStores = useCallback(async () => {
     if (!userId) {
-      setStore(null);
+      setStores([]);
       setChecked(true);
       return;
     }
@@ -279,16 +281,16 @@ export function useMyStore(userId) {
     const { data, error } = await supabase
       .from("stores")
       .select(
-        "id, name, type, address, owner_name, contact_number, owner_id, owner_email, latitude, longitude, status, worst_status, rejection_reason, updated_at"
+        "id, name, type, address, owner_name, contact_number, owner_id, owner_email, latitude, longitude, status, worst_status, rejection_reason, created_at, updated_at"
       )
       .eq("owner_id", userId)
-      .maybeSingle();
+      .order("created_at", { ascending: true });
 
     if (error) {
-      console.error("useMyStore fetch failed:", error);
-      setStore(null);
+      console.error("useMyStores fetch failed:", error);
+      setStores([]);
     } else {
-      setStore(mapStoreRow(data));
+      setStores((data ?? []).map(mapStoreRow));
     }
     setChecked(true);
     setLoading(false);
@@ -296,28 +298,42 @@ export function useMyStore(userId) {
 
   useEffect(() => {
     if (!userId) {
-      setStore(null);
+      setStores([]);
       setChecked(true);
       return;
     }
 
-    fetchStore();
+    fetchStores();
 
     const channel = supabase
-      .channel(`my-store-${userId}`)
+      .channel(`my-stores-${userId}`)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "stores", filter: `owner_id=eq.${userId}` },
-        () => fetchStore()
+        () => fetchStores()
       )
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [userId, fetchStore]);
+  }, [userId, fetchStores]);
 
-  return { store, checked, loading, refetch: fetchStore };
+  return { stores, checked, loading, refetch: fetchStores };
+}
+
+/**
+ * deleteStore
+ * Deletes a store the current user owns. Inventory/feedback/user_alerts
+ * rows cascade-delete automatically (see 01_schema_and_postgis.sql FK
+ * definitions); a linked profiles.store_id is set NULL instead of blocking
+ * the delete. Requires 13_store_owner_delete.sql to have been run (RLS +
+ * grant for DELETE on stores didn't exist before that).
+ *
+ * @param {string} storeId
+ */
+export async function deleteStore(storeId) {
+  return supabase.from("stores").delete().eq("id", storeId);
 }
 
 // ─── useOwnerInventory ───────────────────────────────────────────────────────
@@ -414,6 +430,7 @@ export async function searchInventory(term) {
     productName: row.product_name,
     category: row.category,
     status: row.status,
+    rank: row.rank,
   }));
 }
 
