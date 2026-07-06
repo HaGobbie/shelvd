@@ -95,6 +95,24 @@ function FlyController({ target }) {
   return null;
 }
 
+/**
+ * ForceMapHeight — see StoreRegistrationForm.jsx for the full explanation.
+ * Same fix applied here defensively: something in this project's global
+ * CSS overrides the map container's inline height with an `!important`
+ * rule, collapsing it to 0px. This forces it back via setProperty with
+ * matching `!important` priority, then invalidates Leaflet's cached size.
+ */
+function ForceMapHeight({ height }) {
+  const map = useMap();
+  useEffect(() => {
+    const container = map.getContainer();
+    container.style.setProperty("height", height, "important");
+    const raf = requestAnimationFrame(() => map.invalidateSize());
+    return () => cancelAnimationFrame(raf);
+  }, [map, height]);
+  return null;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -448,6 +466,7 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
                       />
                       <ClickHandler onMapClick={handleMapClick} />
                       <FlyController target={flyTarget} />
+                      <ForceMapHeight height="260px" />
                       {hasCoords && (
                         <Marker
                           position={[lat, lng]}
