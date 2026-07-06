@@ -129,9 +129,20 @@ function LoginScreen() {
     setError(""); setGLoading(true);
     // Supabase redirects the whole page to Google, then back to this URL —
     // there's no popup, so we don't clear gLoading in a `finally` here.
+    //
+    // IMPORTANT: redirectTo intentionally has NO "#/dashboard" (or any other
+    // hash) appended. Supabase's OAuth flow appends its own
+    // "#access_token=..." fragment to whatever URL you give it here — a URL
+    // only ever has ONE hash delimiter, so if this already contained a hash,
+    // the two would collide into a single malformed string like
+    // "#/dashboard#access_token=...", which Supabase-js can't parse back out
+    // (it expects the hash to start immediately with "access_token=...").
+    // App.jsx already forwards the user to "#/dashboard" itself once the
+    // session resolves (see redirectFromOAuthHashIfNeeded), so nothing is
+    // lost by leaving it off here.
     const { error: oauthError } = await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: { redirectTo: window.location.origin + window.location.pathname + "#/dashboard" },
+      options: { redirectTo: window.location.origin + window.location.pathname },
     });
     if (oauthError) {
       setError("Google sign-in failed. Please try again.");
