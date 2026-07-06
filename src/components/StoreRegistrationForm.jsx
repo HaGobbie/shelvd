@@ -516,7 +516,10 @@ export default function StoreRegistrationForm({ user, onComplete }) {
   // Render
   // ─────────────────────────────────────────────────────────────────────────
   return (
-    <div className="regform">
+    <div
+      className="regform"
+      style={{ minHeight: "100dvh", height: "auto", overflowY: "visible", paddingBottom: 24 }}
+    >
       {/* Page header */}
       <div className="regform__header">
         <Store size={28} />
