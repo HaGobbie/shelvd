@@ -1,14 +1,20 @@
 // src/pages/OwnerDashboard.jsx
 // Full Owner Dashboard — now includes:
 //   ✅ Google Sign-In + Email/Password login (Supabase Auth)
-//   ✅ Auto-routing: no store found → StoreRegistrationForm
+//   ✅ Auto-routing: no stores found → StoreRegistrationForm
+//   ✅ MULTI-STORE support: switch between stores tied to one account,
+//      add another store, delete a store (falls back to registration
+//      when the account has zero stores left)
+//   ✅ Inventory management is available immediately, regardless of a
+//      store's approval status — a non-blocking banner informs the
+//      owner of pending/rejected status instead of locking them out
 //   ✅ Real-time Inventory listener (Supabase Realtime, scoped to this store)
 //   ✅ Status toggle, Add, Edit, Delete products
 //   ✅ inventory.last_updated bumped automatically by a Postgres trigger
 //   ✅ stores.updated_at bumped automatically by a Postgres trigger on
 //      any inventory change (see 02_functions_and_triggers.sql)
 
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   PackageCheck,
@@ -23,10 +29,11 @@ import {
   Pencil,
   Trash2,
   Settings,
+  ChevronDown,
+  X,
 } from "lucide-react";
 import { supabase } from "../config/supabaseClient";
-import { useAuth } from "../hooks/useAuth";
-import { useMyStore, useOwnerInventory, formatLastUpdated } from "../hooks/useStores";
+import { useMyStores, useOwnerInventory, deleteStore, formatLastUpdated } from "../hooks/useStores";
 import ProductFormModal from "../components/ProductFormModal";
 import ConfirmDeleteModal from "../components/ConfirmDeleteModal";
 import StoreRegistrationForm from "../components/StoreRegistrationForm";
@@ -232,11 +239,185 @@ function LoginScreen() {
   );
 }
 
-// ─── Main component ───────────────────────────────────────────────────────────
-export default function OwnerDashboard() {
-  const { user, loading: authLoading } = useAuth();
+// ─── Non-blocking approval status banner ─────────────────────────────────────
+function ApprovalBanner({ store }) {
+  if (store.status === "approved") return null;
 
-  const { store: myStore, checked: storeChecked, loading: storeLoading, refetch: refetchMyStore } = useMyStore(user?.id ?? null);
+  const isRejected = store.status === "rejected";
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        padding: "10px 16px",
+        borderRadius: "var(--radius-md, 8px)",
+        marginBottom: 16,
+        fontSize: 13,
+        fontWeight: 600,
+        background: isRejected ? "rgba(231,76,60,0.1)" : "rgba(241,196,15,0.12)",
+        border: `1px solid ${isRejected ? "rgba(231,76,60,0.4)" : "rgba(241,196,15,0.45)"}`,
+        color: isRejected ? "#E74C3C" : "#B7860B",
+      }}
+    >
+      {isRejected ? <AlertTriangle size={16} /> : <Clock size={16} />}
+      <span>
+        {isRejected
+          ? `Registration rejected${store.rejectionReason ? `: ${store.rejectionReason}` : ""}. You can still manage inventory, but this store won't appear on the public map until it's re-approved.`
+          : "Pending barangay approval — this store won't appear on the public map yet, but you can manage its inventory now."}
+      </span>
+    </div>
+  );
+}
+
+// ─── Delete store confirmation ────────────────────────────────────────────────
+// Mirrors ConfirmDeleteModal.jsx's visual language (same class names) but
+// scoped to deleting a STORE rather than a product, since that component
+// is hardcoded for product deletion.
+function DeleteStoreConfirm({ isOpen, onClose, store, onDeleted }) {
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleDelete = async () => {
+    if (!store) return;
+    setDeleting(true);
+    setError("");
+    const { error: deleteError } = await deleteStore(store.id);
+    if (deleteError) {
+      console.error("Delete store failed:", deleteError);
+      setError("Could not delete. Please check your connection and try again.");
+      setDeleting(false);
+      return;
+    }
+    setDeleting(false);
+    onDeleted?.();
+    onClose();
+  };
+
+  return (
+    <AnimatePresence>
+      {isOpen && store && (
+        <>
+          <motion.div
+            className="sheet-overlay"
+            style={{ zIndex: 1100 }}
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            onClick={onClose}
+            aria-hidden="true"
+          />
+          <motion.div
+            className="confirm-dialog"
+            initial={{ scale: 0.88, opacity: 0, y: 16 }}
+            animate={{ scale: 1, opacity: 1, y: 0, transition: { type: "spring", damping: 22, stiffness: 340 } }}
+            exit={{ scale: 0.92, opacity: 0, y: 8 }}
+            role="alertdialog"
+            aria-modal="true"
+          >
+            <div className="confirm-dialog__icon-wrap">
+              <AlertTriangle size={28} className="confirm-dialog__icon" />
+            </div>
+            <h3 className="confirm-dialog__title">Delete This Store?</h3>
+            <p className="confirm-dialog__desc">You are about to permanently remove</p>
+            <p className="confirm-dialog__product-name">"{store.name}"</p>
+            <p className="confirm-dialog__desc" style={{ marginTop: 4 }}>
+              and all of its inventory. This cannot be undone.
+            </p>
+            {error && <p className="confirm-dialog__error">⚠️ {error}</p>}
+            <div className="confirm-dialog__actions">
+              <button type="button" className="confirm-dialog__cancel" onClick={onClose} disabled={deleting}>
+                <X size={16} /> Cancel
+              </button>
+              <button type="button" className="confirm-dialog__delete" onClick={handleDelete} disabled={deleting}>
+                {deleting ? (
+                  <>
+                    <span className="map-loading-spinner" style={{ width: 16, height: 16, borderWidth: 2, borderTopColor: "#fff" }} />
+                    Deleting…
+                  </>
+                ) : (
+                  <>
+                    <Trash2 size={16} /> Yes, Delete
+                  </>
+                )}
+              </button>
+            </div>
+          </motion.div>
+        </>
+      )}
+    </AnimatePresence>
+  );
+}
+
+// ─── Store switcher ───────────────────────────────────────────────────────────
+function StoreSwitcher({ stores, selectedStoreId, onSelect }) {
+  if (stores.length <= 1) return null;
+
+  return (
+    <div style={{ position: "relative", display: "inline-block" }}>
+      <select
+        value={selectedStoreId ?? ""}
+        onChange={(e) => onSelect(e.target.value)}
+        aria-label="Switch store"
+        style={{
+          appearance: "none",
+          background: "var(--color-surface, #fff)",
+          border: "1px solid var(--color-border, #ddd)",
+          borderRadius: "var(--radius-md, 8px)",
+          padding: "6px 30px 6px 10px",
+          fontSize: 13,
+          fontWeight: 600,
+          cursor: "pointer",
+        }}
+      >
+        {stores.map((s) => (
+          <option key={s.id} value={s.id}>
+            {s.name}{s.status !== "approved" ? ` (${s.status === "rejected" ? "Rejected" : "Pending"})` : ""}
+          </option>
+        ))}
+      </select>
+      <ChevronDown
+        size={14}
+        style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}
+      />
+    </div>
+  );
+}
+
+// ─── Main component ───────────────────────────────────────────────────────────
+export default function OwnerDashboard({ session }) {
+  const user = session?.user ?? null;
+
+  const { stores, checked: storesChecked, loading: storesLoading, refetch: refetchStores } = useMyStores(user?.id ?? null);
+
+  const [selectedStoreId, setSelectedStoreId] = useState(null);
+  const [addingStore, setAddingStore] = useState(false);
+  const [deleteStoreConfirmOpen, setDeleteStoreConfirmOpen] = useState(false);
+  const justAddedRef = useRef(false);
+
+  // Keep selectedStoreId valid as `stores` changes (initial load, another
+  // store added, the selected one deleted, etc). After adding a new store
+  // (justAddedRef), jump to the newest one instead of defaulting to the
+  // first — that's the one the owner just created and expects to land on.
+  useEffect(() => {
+    if (stores.length === 0) {
+      if (selectedStoreId !== null) setSelectedStoreId(null);
+      return;
+    }
+    const stillValid = stores.some((s) => s.id === selectedStoreId);
+    if (!stillValid) {
+      if (justAddedRef.current) {
+        const newest = [...stores].sort(
+          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        )[0];
+        setSelectedStoreId(newest.id);
+        justAddedRef.current = false;
+      } else {
+        setSelectedStoreId(stores[0].id);
+      }
+    }
+  }, [stores, selectedStoreId]);
+
+  const myStore = stores.find((s) => s.id === selectedStoreId) ?? null;
+
   const { inventory, updateProductStatus } = useOwnerInventory(myStore?.id ?? null);
 
   const [filterQuery, setFilterQuery]         = useState("");
@@ -262,22 +443,20 @@ export default function OwnerDashboard() {
     : inventory;
 
   // ── Render states ─────────────────────────────────────────────────────────
-  if (authLoading) return (
-    <div className="login-screen">
-      <div className="dashboard-loading"><div className="map-loading-spinner" /><span>Checking session…</span></div>
-    </div>
-  );
-
+  // NOTE: auth resolution itself (authLoading) already happened in App.jsx
+  // before this component ever mounts — by the time we're here, `session`
+  // is either null (not logged in) or populated. No separate auth-loading
+  // spinner is needed at this level anymore.
   if (!user) return <LoginScreen />;
 
-  if (!storeChecked || storeLoading) return (
+  if (!storesChecked || storesLoading) return (
     <div className="login-screen">
-      <div className="dashboard-loading"><div className="map-loading-spinner" /><span>Loading your store…</span></div>
+      <div className="dashboard-loading"><div className="map-loading-spinner" /><span>Loading your stores…</span></div>
     </div>
   );
 
-  // No store → Registration wizard
-  if (storeChecked && !myStore) {
+  // Zero stores → registration wizard (mandatory, no cancel option)
+  if (storesChecked && stores.length === 0) {
     return (
       // NOTE: intentionally NOT using className="dashboard" here — that
       // class carries the header/toolbar/list flex layout meant for the
@@ -288,12 +467,8 @@ export default function OwnerDashboard() {
         <StoreRegistrationForm
           user={user}
           onComplete={() => {
-            // The real fix for "submitting does nothing": refetch immediately
-            // rather than only hoping Realtime picks up the INSERT. See
-            // 10_enable_realtime_publication.sql for the other half of this —
-            // Realtime needs the table explicitly added to its publication,
-            // which affects this and the map's/inventory's live updates too.
-            refetchMyStore();
+            justAddedRef.current = true;
+            refetchStores();
           }}
         />
         <div style={{ textAlign: "center", padding: "16px 0 32px" }}>
@@ -307,34 +482,26 @@ export default function OwnerDashboard() {
     );
   }
 
-  // Store exists but is still pending / was rejected — inventory management
-  // only makes sense once a barangay official has approved the listing.
-  if (myStore.status !== "approved") {
-    const isRejected = myStore.status === "rejected";
+  // Adding another store (owner already has ≥1) — same wizard, but
+  // cancelable, and jumps to the new store on completion.
+  if (addingStore) {
     return (
-      <div className="login-screen">
-        <div className="login-card" style={{ textAlign: "center" }}>
-          <div className="login-card__logo">
-            {isRejected ? <AlertTriangle size={36} color="#E74C3C" /> : <Clock size={36} />}
-          </div>
-          <h1 className="login-card__title">
-            {isRejected ? "Registration Rejected" : "Pending Approval"}
-          </h1>
-          <p className="login-card__subtitle">
-            {isRejected
-              ? (myStore.rejectionReason || "Your store registration was not approved. Please contact your barangay office for details.")
-              : "Your store is awaiting review by a barangay official. This page will update automatically once it's approved."}
-          </p>
-          <button type="button" className="dashboard-header__logout" style={{ marginTop: 16 }}
-            onClick={() => supabase.auth.signOut()}>
-            Sign Out
-          </button>
-        </div>
+      <div style={{ minHeight: "100dvh", height: "auto", overflowY: "auto", overflowX: "hidden" }}>
+        <StoreRegistrationForm
+          user={user}
+          onCancel={() => setAddingStore(false)}
+          onComplete={() => {
+            justAddedRef.current = true;
+            refetchStores();
+            setAddingStore(false);
+          }}
+        />
       </div>
     );
   }
 
-  // Full dashboard
+  // Full dashboard for the currently selected store. Approval status no
+  // longer gates this — a banner informs, nothing blocks.
   return (
     <div className="dashboard">
       <header className="dashboard-header">
@@ -347,7 +514,12 @@ export default function OwnerDashboard() {
             </span>
           </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", flexWrap: "wrap" }}>
+          <StoreSwitcher stores={stores} selectedStoreId={selectedStoreId} onSelect={setSelectedStoreId} />
+          <button type="button" className="dashboard-header__edit-store" onClick={() => setAddingStore(true)}>
+            <Plus size={16} strokeWidth={2} />
+            <span>Add Store</span>
+          </button>
           <button
             type="button"
             className="dashboard-header__edit-store"
@@ -358,11 +530,24 @@ export default function OwnerDashboard() {
             <Settings size={16} strokeWidth={2} />
             <span>Edit Store</span>
           </button>
+          <button
+            type="button"
+            className="dashboard-header__edit-store"
+            onClick={() => setDeleteStoreConfirmOpen(true)}
+            aria-label="Delete this store"
+            title="Delete Store"
+            style={{ color: "#E74C3C", borderColor: "rgba(231,76,60,0.4)" }}
+          >
+            <Trash2 size={16} strokeWidth={2} />
+            <span>Delete Store</span>
+          </button>
           <button className="dashboard-header__logout" onClick={() => supabase.auth.signOut()} type="button">Sign Out</button>
         </div>
       </header>
 
       <main className="dashboard-main">
+        {myStore && <ApprovalBanner store={myStore} />}
+
         <div className="dashboard-toolbar">
           <div className="dashboard-section-label">
             <Package size={14} />&nbsp;Inventory
@@ -422,6 +607,18 @@ export default function OwnerDashboard() {
         isOpen={storeEditOpen}
         onClose={() => setStoreEditOpen(false)}
         store={myStore}
+      />
+      <DeleteStoreConfirm
+        isOpen={deleteStoreConfirmOpen}
+        onClose={() => setDeleteStoreConfirmOpen(false)}
+        store={myStore}
+        onDeleted={() => {
+          // After deletion, `stores` will update via realtime/refetch and
+          // the useEffect above will pick a new valid selectedStoreId
+          // automatically (or fall through to the registration wizard if
+          // that was the last one).
+          refetchStores();
+        }}
       />
     </div>
   );
