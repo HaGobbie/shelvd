@@ -123,7 +123,7 @@ function ForceMapHeight({ height }) {
  * @param {{
  *   isOpen: boolean,
  *   onClose: Function,
- *   store: object          — the current store object (from useMyStore, camelCase)
+ *   store: object          — the current store object (from useMyStores, camelCase)
  * }} props
  */
 export default function StoreEditModal({ isOpen, onClose, store }) {
