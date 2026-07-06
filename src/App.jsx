@@ -32,7 +32,7 @@ export default function App() {
   const route = useHashRoute();
 
   // Lightweight markers for the whole map (id, name, coords, worstStatus)
-  const { markers, loading } = useMapMarkers();
+  const { markers, loading, error: markersError } = useMapMarkers();
 
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedStoreId, setSelectedStoreId] = useState(null);
@@ -100,6 +100,7 @@ export default function App() {
       <MapContainer
         markers={markers}
         loading={loading}
+        error={markersError}
         searchQuery={searchQuery}
         searchMatches={searchMatches}
         onStoreSelect={handleStoreSelect}
