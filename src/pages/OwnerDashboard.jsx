@@ -236,7 +236,7 @@ function LoginScreen() {
 export default function OwnerDashboard() {
   const { user, loading: authLoading } = useAuth();
 
-  const { store: myStore, checked: storeChecked, loading: storeLoading } = useMyStore(user?.id ?? null);
+  const { store: myStore, checked: storeChecked, loading: storeLoading, refetch: refetchMyStore } = useMyStore(user?.id ?? null);
   const { inventory, updateProductStatus } = useOwnerInventory(myStore?.id ?? null);
 
   const [filterQuery, setFilterQuery]         = useState("");
@@ -279,8 +279,23 @@ export default function OwnerDashboard() {
   // No store → Registration wizard
   if (storeChecked && !myStore) {
     return (
-      <div className="dashboard" style={{ minHeight: "100dvh", overflowY: "auto" }}>
-        <StoreRegistrationForm user={user} onComplete={() => {}} />
+      // NOTE: intentionally NOT using className="dashboard" here — that
+      // class carries the header/toolbar/list flex layout meant for the
+      // main inventory dashboard, not this scrollable multi-step form.
+      // Plain, explicit block layout guarantees this content can scroll
+      // regardless of what .dashboard's own rules assume.
+      <div style={{ minHeight: "100dvh", height: "auto", overflowY: "auto", overflowX: "hidden" }}>
+        <StoreRegistrationForm
+          user={user}
+          onComplete={() => {
+            // The real fix for "submitting does nothing": refetch immediately
+            // rather than only hoping Realtime picks up the INSERT. See
+            // 10_enable_realtime_publication.sql for the other half of this —
+            // Realtime needs the table explicitly added to its publication,
+            // which affects this and the map's/inventory's live updates too.
+            refetchMyStore();
+          }}
+        />
         <div style={{ textAlign: "center", padding: "16px 0 32px" }}>
           <button type="button"
             style={{ fontSize: 13, color: "var(--color-text-muted)", textDecoration: "underline" }}
