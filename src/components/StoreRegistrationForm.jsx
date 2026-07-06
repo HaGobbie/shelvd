@@ -115,6 +115,31 @@ function FlyController({ target }) {
   return null;
 }
 
+/**
+ * ForceMapHeight
+ * Defensive fix for a real bug seen in production: something in this
+ * project's global CSS (likely an `!important` rule from a reset or
+ * leftover pre-migration stylesheet) was overriding the map container's
+ * inline `height: 280px`, collapsing it to 0px tall — confirmed via
+ * DevTools showing "515 × 0" despite the correct inline style being
+ * present in the DOM. A plain inline style can't beat an external
+ * `!important` rule, so instead we grab the real Leaflet container DOM
+ * node and set the height directly with `!important` priority (which
+ * DOES beat any external `!important`), then call invalidateSize() so
+ * Leaflet redraws its tiles for the corrected box.
+ */
+function ForceMapHeight({ height }) {
+  const map = useMap();
+  useEffect(() => {
+    const container = map.getContainer();
+    container.style.setProperty("height", height, "important");
+    // Let the height change actually apply before Leaflet re-measures
+    const raf = requestAnimationFrame(() => map.invalidateSize());
+    return () => cancelAnimationFrame(raf);
+  }, [map, height]);
+  return null;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Step components
 // ─────────────────────────────────────────────────────────────────────────────
@@ -320,6 +345,7 @@ function StepGISLocation({ data, onChange, errors }) {
           />
           <ClickHandler onMapClick={handleMapClick} />
           <FlyController target={flyTarget} />
+          <ForceMapHeight height="280px" />
 
           {hasCoords && (
             <Marker
@@ -408,6 +434,7 @@ function StepReview({ data }) {
               subdomains="abcd"
               maxZoom={20}
             />
+            <ForceMapHeight height="180px" />
             <Marker position={[data.lat, data.lng]} icon={STORE_PIN_ICON} />
           </MapContainer>
         </div>
