@@ -79,6 +79,7 @@ function MapController({ flyTo }) {
 export default function MapContainer({
   markers = [],
   loading = false,
+  error = null,
   searchQuery = "",
   searchMatches = new Map(),
   onStoreSelect,
@@ -116,6 +117,35 @@ export default function MapContainer({
         <div className="map-loading-overlay">
           <div className="map-loading-spinner" />
           <span>Loading community map…</span>
+        </div>
+      )}
+
+      {/* Surface fetch/RLS/permission errors instead of silently showing
+          an empty map — this is what was missing when a "permission
+          denied" error from a missing GRANT went completely unnoticed. */}
+      {!loading && error && (
+        <div
+          className="map-error-banner"
+          role="alert"
+          style={{
+            position: "absolute",
+            top: 12,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 900,
+            background: "#E74C3C",
+            color: "#fff",
+            padding: "10px 16px",
+            borderRadius: 8,
+            fontSize: 13,
+            fontWeight: 600,
+            boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
+            maxWidth: "90%",
+            textAlign: "center",
+          }}
+        >
+          <strong>Couldn't load stores.</strong>{" "}
+          {error.message || "Please check your connection and try again."}
         </div>
       )}
 
