@@ -25,6 +25,31 @@ import { supabase } from "./config/supabaseClient";
 
 import "./styles/App.css";
 
+// ─── OAuth hash sanitizer ─────────────────────────────────────────────────
+// Runs ONCE, at module load — before the App component ever renders, and
+// before any async continuation of Supabase-js's own internal hash
+// detection can run (that happens via a promise, so it's deferred to a
+// microtask tick; this synchronous code always beats it).
+//
+// Why this is needed: Supabase's OAuth redirect appends "access_token=..."
+// to whatever `redirectTo` URL you gave it. If that URL already contained
+// its own hash (e.g. "...#/dashboard"), the browser doesn't create a
+// second fragment — a URL only has ONE "#" delimiter — so you end up with
+// a single, literal hash string: "#/dashboard#access_token=...". Supabase-js
+// expects the hash to start immediately with "access_token=...", so it
+// never recognizes this malformed one and the session never resolves,
+// leaving the app stuck on a loading/verifying screen forever.
+//
+// This strips anything before the real token payload so Supabase-js can
+// parse it correctly, regardless of what prefix ended up in front of it.
+if (
+  window.location.hash.includes("access_token") &&
+  !window.location.hash.startsWith("#access_token")
+) {
+  const tokenIndex = window.location.hash.indexOf("access_token");
+  window.location.hash = "#" + window.location.hash.substring(tokenIndex);
+}
+
 /**
  * Tiny hash-router — no external routing library needed for Phase A.
  * Returns [route, setRoute] rather than just `route`: the setter lets a
