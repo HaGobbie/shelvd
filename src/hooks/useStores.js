@@ -363,6 +363,8 @@ export async function bulkUpsertInventory(storeId, rows, { overwrite } = { overw
     })
     .select("id, name, price, status");
 }
+
+/**
  * Deletes a store the current user owns. Inventory/feedback/user_alerts
  * rows cascade-delete automatically (see 01_schema_and_postgis.sql FK
  * definitions); a linked profiles.store_id is set NULL instead of blocking
