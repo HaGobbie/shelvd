@@ -1,6 +1,8 @@
 // src/components/StoreMarker.jsx
 // Renders a single map pin whose color strictly follows the traffic-light
-// palette: Green (#2ECC71), Yellow/Amber (#F1C40F), Red (#E74C3C).
+// palette: Green (#2ECC71), Yellow/Amber (#F1C40F), Red (#E74C3C) — but
+// ONLY while a search is active. With no search, pins are neutral (a
+// single brand color) — see MapContainer.jsx's ARCHITECTURE NOTE for why.
 // Dimmed (gray) when a search is active but the store has no matching product.
 // Uses react-leaflet's Marker + custom DivIcon for full color control.
 
@@ -29,6 +31,12 @@ const STATUS_CONFIG = {
 
 const DIMMED_COLOR = "#9B9B9B";
 const DIMMED_RING = "rgba(155, 155, 155, 0.2)";
+
+// Default pin appearance when no search is active — just "here's a
+// store", not a status judgment. Matches the app's brand color so it
+// reads as neutral/informational rather than a 4th traffic-light state.
+const NEUTRAL_COLOR = "#2C3E50";
+const NEUTRAL_RING = "rgba(44, 62, 80, 0.25)";
 // ──────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -87,7 +95,7 @@ function buildDivIcon(color, ringColor, isSelected, isDimmed) {
  * @typedef {Object} StoreMarkerProps
  * @property {import("../hooks/useStores").Store}       store
  * @property {"available"|"low"|"out"|null} displayStatus
- * @property {boolean} isHighlighted   — false → pin is dimmed
+ * @property {boolean} isHighlighted   — false → pin is dimmed (only meaningful during search)
  * @property {boolean} isSelected
  * @property {boolean} searchActive
  * @property {number}  matchCount
@@ -110,12 +118,30 @@ export default function StoreMarker({
 }) {
   const isDimmed = searchActive && !isHighlighted;
 
-  const { color, label, ringColor } = useMemo(() => {
-    if (!displayStatus || isDimmed) {
-      return { color: DIMMED_COLOR, label: "No match", ringColor: DIMMED_RING };
+  const { color, label, ringColor, showStatusLabel } = useMemo(() => {
+    // No search active at all → neutral pin, no status label. This is
+    // the default resting state for every pin on the map.
+    if (!searchActive) {
+      return {
+        color: NEUTRAL_COLOR,
+        label: null,
+        ringColor: NEUTRAL_RING,
+        showStatusLabel: false,
+      };
     }
-    return STATUS_CONFIG[displayStatus] ?? STATUS_CONFIG.available;
-  }, [displayStatus, isDimmed]);
+    // Search active, but this store had no matching product.
+    if (isDimmed) {
+      return {
+        color: DIMMED_COLOR,
+        label: "No match",
+        ringColor: DIMMED_RING,
+        showStatusLabel: true,
+      };
+    }
+    // Search active and this store matched — show the real status.
+    const cfg = STATUS_CONFIG[displayStatus] ?? STATUS_CONFIG.available;
+    return { ...cfg, showStatusLabel: true };
+  }, [displayStatus, isDimmed, searchActive]);
 
   const icon = useMemo(
     () => buildDivIcon(color, ringColor, isSelected, isDimmed),
@@ -137,12 +163,14 @@ export default function StoreMarker({
       >
         <div className="marker-tooltip">
           <strong className="marker-tooltip__name">{store.name}</strong>
-          <span
-            className="marker-tooltip__badge"
-            style={{ color, borderColor: color }}
-          >
-            {label}
-          </span>
+          {showStatusLabel && (
+            <span
+              className="marker-tooltip__badge"
+              style={{ color, borderColor: color }}
+            >
+              {label}
+            </span>
+          )}
           {searchActive && isHighlighted && (
             <span className="marker-tooltip__count">
               {matchCount} matching product{matchCount !== 1 ? "s" : ""}
