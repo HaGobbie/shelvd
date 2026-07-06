@@ -10,7 +10,7 @@
 // ("SRID=4326;POINT(lng lat)") — Postgres casts this to geography(Point,4326)
 // automatically; `latitude`/`longitude` are generated columns derived from it.
 
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   MapContainer,
@@ -462,9 +462,16 @@ const INITIAL_DATA = {
  * Shows a 3-step wizard and writes the new store to Supabase on submit,
  * starting in "pending_approval" status per the RLS insert policy.
  *
- * @param {{ user: import("@supabase/supabase-js").User, onComplete: Function }} props
+ * @param {{
+ *   user: import("@supabase/supabase-js").User,
+ *   onComplete: Function,
+ *   onCancel?: Function  — optional; when provided, shows a "Cancel"
+ *     button (only meaningful for the "add another store" flow from
+ *     within the dashboard — the mandatory first-time registration has
+ *     no legitimate way to cancel, so this stays unset there).
+ * }} props
  */
-export default function StoreRegistrationForm({ user, onComplete }) {
+export default function StoreRegistrationForm({ user, onComplete, onCancel }) {
   const [step, setStep]       = useState(1);
   const [dir, setDir]         = useState(1);    // animation direction
   const [data, setData]       = useState(INITIAL_DATA);
@@ -508,10 +515,23 @@ export default function StoreRegistrationForm({ user, onComplete }) {
   };
 
   // ── Final submit ──────────────────────────────────────────────────────────
+  // isSubmittingRef is a SYNCHRONOUS guard, separate from the `submitting`
+  // state. This matters because `disabled={submitting}` on the button only
+  // takes effect on the NEXT RENDER — a fast double-click/tap can fire
+  // handleSubmit twice before React has re-rendered with the button
+  // disabled. That's exactly what produced duplicate store rows in
+  // production: two (or three) inserts landing before the UI caught up.
+  // Checking a ref at the very top, before any `await` or state update,
+  // closes that window regardless of render timing.
+  const isSubmittingRef = useRef(false);
+
   const handleSubmit = async () => {
+    if (isSubmittingRef.current) return;
+
     const errs = validate(2);
     if (Object.keys(errs).length > 0) { setErrors(errs); return; }
 
+    isSubmittingRef.current = true;
     setSubmitting(true);
     setSubmitError("");
 
@@ -532,11 +552,16 @@ export default function StoreRegistrationForm({ user, onComplete }) {
       console.error("Store registration failed:", insertError);
       setSubmitError("Registration failed. Please check your connection and try again.");
       setSubmitting(false);
+      isSubmittingRef.current = false;
       return;
     }
 
     setSubmitting(false);
     onComplete?.();
+    // Deliberately NOT resetting isSubmittingRef.current on success — the
+    // parent immediately swaps this component out for the dashboard/
+    // pending view, so there's no legitimate case where this same form
+    // instance should accept another submit.
   };
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -548,12 +573,33 @@ export default function StoreRegistrationForm({ user, onComplete }) {
       style={{ minHeight: "100dvh", height: "auto", overflowY: "visible", paddingBottom: 24 }}
     >
       {/* Page header */}
-      <div className="regform__header">
+      <div className="regform__header" style={{ position: "relative" }}>
         <Store size={28} />
         <div>
           <h1 className="regform__title">Register Your Store</h1>
           <p className="regform__subtitle">Signed in as {user.email}</p>
         </div>
+        {onCancel && (
+          <button
+            type="button"
+            onClick={onCancel}
+            aria-label="Cancel adding this store"
+            style={{
+              position: "absolute",
+              top: 0,
+              right: 0,
+              background: "none",
+              border: "none",
+              color: "var(--color-text-muted)",
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: "pointer",
+              padding: 8,
+            }}
+          >
+            ✕ Cancel
+          </button>
+        )}
       </div>
 
       {/* Step progress indicator */}
