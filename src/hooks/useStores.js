@@ -43,6 +43,7 @@ function mapProductRow(row) {
     storeId: row.store_id,
     name: row.name,
     category: row.category,
+    price: row.price,
     status: row.status,
     lastUpdated: row.last_updated,
   };
@@ -201,7 +202,7 @@ export function useStoreDetails(storeId) {
           .single(),
         supabase
           .from("inventory")
-          .select("id, store_id, name, category, status, last_updated")
+          .select("id, store_id, name, category, price, status, last_updated")
           .eq("store_id", storeId),
       ]);
 
@@ -323,7 +324,45 @@ export function useMyStores(userId) {
 }
 
 /**
- * deleteStore
+ * bulkUpsertInventory
+ * Used by the CSV bulk-import feature. Two things this function is
+ * deliberately strict about:
+ *
+ * 1. SCOPING: `store_id` is injected into every row HERE, client-side,
+ *    from the trusted `storeId` argument — never trust a store_id that
+ *    might be present in an uploaded CSV. Even if a malicious or
+ *    corrupted file contained a store_id column, it's discarded; the
+ *    caller's own active store is the only source of truth.
+ * 2. ATOMICITY: all rows are sent in ONE .upsert() call, which Postgres/
+ *    PostgREST executes as a single statement in a single transaction —
+ *    if any row violates a constraint (e.g. the NOT NULL price check),
+ *    the ENTIRE batch is rejected and nothing is written. Do not loop
+ *    this per-row; that would insert some rows and not others on a
+ *    partial failure, which is exactly what this function exists to avoid.
+ *
+ * @param {string} storeId
+ * @param {Array<{name: string, category: string, price: number, status: string}>} rows
+ * @param {{ overwrite: boolean }} options
+ *   overwrite: true  -> matching (store_id, name) rows are UPDATED (last write wins)
+ *   overwrite: false -> matching (store_id, name) rows are SKIPPED, only new rows inserted
+ */
+export async function bulkUpsertInventory(storeId, rows, { overwrite } = { overwrite: false }) {
+  const payload = rows.map((row) => ({
+    store_id: storeId, // injected here — never taken from the CSV/caller-supplied row
+    name: row.name,
+    category: row.category,
+    price: row.price,
+    status: row.status ?? "available",
+  }));
+
+  return supabase
+    .from("inventory")
+    .upsert(payload, {
+      onConflict: "store_id,name_normalized",
+      ignoreDuplicates: !overwrite,
+    })
+    .select("id, name, price, status");
+}
  * Deletes a store the current user owns. Inventory/feedback/user_alerts
  * rows cascade-delete automatically (see 01_schema_and_postgis.sql FK
  * definitions); a linked profiles.store_id is set NULL instead of blocking
@@ -359,7 +398,7 @@ export function useOwnerInventory(storeId) {
 
     supabase
       .from("inventory")
-      .select("id, store_id, name, category, status, last_updated")
+      .select("id, store_id, name, category, price, status, last_updated")
       .eq("store_id", storeId)
       .order("name", { ascending: true })
       .then(({ data }) => {
