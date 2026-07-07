@@ -97,6 +97,22 @@ export function formatLastUpdated(timestamp) {
 }
 
 /**
+ * formatPrice
+ * Formats a numeric price as a clean peso string, e.g. 55 -> "₱55.00".
+ * Returns a neutral placeholder for null/undefined/invalid values rather
+ * than throwing or rendering "₱NaN" — shouldn't normally happen now that
+ * price is NOT NULL in the DB, but defends against stale cached data.
+ *
+ * @param {number|string|null|undefined} price
+ * @returns {string}
+ */
+export function formatPrice(price) {
+  const num = typeof price === "number" ? price : Number(price);
+  if (price === null || price === undefined || Number.isNaN(num)) return "—";
+  return `₱${num.toFixed(2)}`;
+}
+
+/**
  * getWorstStatusForQuery
  * Given a store's full inventory array and a search query, returns the
  * worst status ("out" > "low" > "available") among matching products, or
@@ -365,6 +381,7 @@ export async function bulkUpsertInventory(storeId, rows, { overwrite } = { overw
 }
 
 /**
+ * deleteStore
  * Deletes a store the current user owns. Inventory/feedback/user_alerts
  * rows cascade-delete automatically (see 01_schema_and_postgis.sql FK
  * definitions); a linked profiles.store_id is set NULL instead of blocking
