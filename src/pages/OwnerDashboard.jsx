@@ -563,8 +563,22 @@ export default function OwnerDashboard({ session }) {
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button
               type="button"
-              className="dashboard-header__edit-store"
               onClick={() => setBulkImportOpen(true)}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                height: 44,
+                padding: "0 16px",
+                borderRadius: "var(--radius-pill, 999px)",
+                fontSize: 13,
+                fontWeight: 700,
+                fontFamily: "var(--font-heading, inherit)",
+                whiteSpace: "nowrap",
+                background: "transparent",
+                color: "var(--color-brand-primary, #2C3E50)",
+                border: "1.5px solid var(--color-brand-primary, #2C3E50)",
+              }}
             >
               <UploadCloud size={16} strokeWidth={2} />
               <span>Bulk Import CSV</span>
