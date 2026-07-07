@@ -7,7 +7,7 @@
 import React, { useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, MapPin, Phone, Clock, Package } from "lucide-react";
-import { formatLastUpdated } from "../hooks/useStores";
+import { formatLastUpdated, formatPrice } from "../hooks/useStores";
 
 // ─── Status badge config ──────────────────────────────────────────────────────
 const STATUS_CONFIG = {
@@ -84,6 +84,12 @@ function ProductRow({ product, searchQuery }) {
         <span className="product-row__category">{product.category}</span>
       </div>
       <div className="product-row__right">
+        <span
+          className="product-row__price"
+          style={{ fontWeight: 700, fontSize: 14, color: "var(--color-text-primary, #1a1a1a)" }}
+        >
+          {formatPrice(product.price)}
+        </span>
         <StatusBadge status={product.status} />
         <span className="product-row__timestamp">
           <Clock size={11} />
