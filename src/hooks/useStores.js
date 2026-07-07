@@ -45,6 +45,11 @@ function mapProductRow(row) {
     category: row.category,
     price: row.price,
     status: row.status,
+    quantity: row.quantity,
+    lowStockThreshold: row.low_stock_threshold,
+    sku: row.sku,
+    description: row.description,
+    unit: row.unit,
     lastUpdated: row.last_updated,
   };
 }
@@ -218,7 +223,7 @@ export function useStoreDetails(storeId) {
           .single(),
         supabase
           .from("inventory")
-          .select("id, store_id, name, category, price, status, last_updated")
+          .select("id, store_id, name, category, price, status, quantity, low_stock_threshold, sku, description, unit, last_updated")
           .eq("store_id", storeId),
       ]);
 
@@ -356,8 +361,18 @@ export function useMyStores(userId) {
  *    this per-row; that would insert some rows and not others on a
  *    partial failure, which is exactly what this function exists to avoid.
  *
+ * quantity/sku/description/unit are all OPTIONAL — rows that don't
+ * include them (e.g. the current BulkImportModal.jsx, which only sends
+ * name/category/price/status) still work unchanged; they just get the
+ * same DB defaults a manually-added product would (quantity 0, sku/
+ * description null, unit 'piece').
+ *
  * @param {string} storeId
- * @param {Array<{name: string, category: string, price: number, status: string}>} rows
+ * @param {Array<{
+ *   name: string, category: string, price: number, status: string,
+ *   quantity?: number, sku?: string|null, description?: string|null,
+ *   unit?: string
+ * }>} rows
  * @param {{ overwrite: boolean }} options
  *   overwrite: true  -> matching (store_id, name) rows are UPDATED (last write wins)
  *   overwrite: false -> matching (store_id, name) rows are SKIPPED, only new rows inserted
@@ -369,6 +384,10 @@ export async function bulkUpsertInventory(storeId, rows, { overwrite } = { overw
     category: row.category,
     price: row.price,
     status: row.status ?? "available",
+    quantity: row.quantity ?? 0,
+    sku: row.sku ?? null,
+    description: row.description ?? null,
+    unit: row.unit ?? "piece",
   }));
 
   return supabase
@@ -377,7 +396,7 @@ export async function bulkUpsertInventory(storeId, rows, { overwrite } = { overw
       onConflict: "store_id,name_normalized",
       ignoreDuplicates: !overwrite,
     })
-    .select("id, name, price, status");
+    .select("id, name, price, status, quantity, sku, description, unit");
 }
 
 /**
@@ -417,7 +436,7 @@ export function useOwnerInventory(storeId) {
 
     supabase
       .from("inventory")
-      .select("id, store_id, name, category, price, status, last_updated")
+      .select("id, store_id, name, category, price, status, quantity, low_stock_threshold, sku, description, unit, last_updated")
       .eq("store_id", storeId)
       .order("name", { ascending: true })
       .then(({ data }) => {
