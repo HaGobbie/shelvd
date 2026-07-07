@@ -8,16 +8,20 @@
 // threshold. See BulkImportModal.jsx for the confirmation UI this feeds.
 
 export const TARGET_FIELDS = [
-  { key: "name",     label: "Product Name", required: true },
-  { key: "price",    label: "Price",        required: true },
-  { key: "category", label: "Category",     required: false },
-  { key: "status",   label: "Stock Status", required: false },
+  { key: "name",        label: "Product Name", required: true },
+  { key: "price",       label: "Price",        required: true },
+  { key: "category",    label: "Category",     required: false },
+  { key: "status",      label: "Stock Status", required: false },
+  { key: "quantity",    label: "Quantity",     required: false },
+  { key: "sku",         label: "SKU / Barcode", required: false },
+  { key: "description", label: "Description",  required: false },
+  { key: "unit",        label: "Unit (kg, pack, piece, etc.)", required: false },
 ];
 
 const FIELD_SYNONYMS = {
   name: [
     "name", "product name", "item name", "item title", "product",
-    "title", "item", "description", "product title",
+    "title", "item", "product title",
   ],
   price: [
     "price", "cost", "msrp", "retail price", "selling price",
@@ -30,6 +34,25 @@ const FIELD_SYNONYMS = {
   status: [
     "status", "stock status", "availability", "stock", "in stock",
     "inventory status",
+  ],
+  quantity: [
+    "quantity", "qty", "stock", "stock qty", "stock quantity",
+    "units", "on hand", "inventory count", "count", "available qty",
+  ],
+  sku: [
+    // Deliberately specific, real barcode/SKU terms only — NOT generic
+    // "id"/"internal id"/"index", which are common in exported catalogs
+    // but refer to a merchant's own arbitrary sequential numbering, not
+    // a portable identifier. Auto-mapping those would create false
+    // uniqueness collisions/non-collisions across separate uploads.
+    "sku", "barcode", "ean", "upc", "gtin", "product code", "item code",
+  ],
+  description: [
+    "description", "details", "notes", "product description",
+    "item description", "summary",
+  ],
+  unit: [
+    "unit", "uom", "unit of measure", "measure", "packaging",
   ],
 };
 
@@ -55,7 +78,7 @@ export function normalizeHeader(header) {
 export function guessColumnMapping(headers) {
   const mapping = {};
   const usedFields = new Set();
-  const priorityOrder = ["name", "price", "category", "status"];
+  const priorityOrder = ["name", "price", "sku", "quantity", "category", "status", "unit", "description"];
 
   for (const header of headers) {
     const normalized = normalizeHeader(header);
