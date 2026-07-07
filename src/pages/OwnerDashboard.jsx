@@ -31,9 +31,10 @@ import {
   Settings,
   ChevronDown,
   X,
+  UploadCloud,
 } from "lucide-react";
 import { supabase } from "../config/supabaseClient";
-import { useMyStores, useOwnerInventory, deleteStore, formatLastUpdated } from "../hooks/useStores";
+import { useMyStores, useOwnerInventory, deleteStore, formatLastUpdated, formatPrice } from "../hooks/useStores";
 import ProductFormModal from "../components/ProductFormModal";
 import ConfirmDeleteModal from "../components/ConfirmDeleteModal";
 import StoreRegistrationForm from "../components/StoreRegistrationForm";
@@ -88,7 +89,9 @@ function ProductCard({ product, onStatusChange, onEdit, onDelete }) {
           onClick={() => setExpanded(v => !v)} type="button" aria-expanded={expanded}>
           <div className="product-card__info">
             <span className="product-card__name">{product.name}</span>
-            <span className="product-card__category">{product.category}</span>
+            <span className="product-card__category">
+              {product.category} · <strong style={{ color: "var(--color-text-primary, #1a1a1a)" }}>{formatPrice(product.price)}</strong>
+            </span>
           </div>
           <div className="product-card__right">
             {localSaved
@@ -557,19 +560,19 @@ export default function OwnerDashboard({ session }) {
               {filteredInventory.length}{filterQuery ? ` of ${inventory.length}` : ""} products
             </span>
           </div>
-          <button type="button" className="dashboard-add-btn" onClick={openAddModal}>
-            <Plus size={18} strokeWidth={2.5} /> Add Product
-          </button>
-        </div>
-
-        <div style={{ marginBottom: 12 }}>
-          <button
-            type="button"
-            className="dashboard-header__edit-store"
-            onClick={() => setBulkImportOpen(true)}
-          >
-            Import from CSV
-          </button>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              className="dashboard-header__edit-store"
+              onClick={() => setBulkImportOpen(true)}
+            >
+              <UploadCloud size={16} strokeWidth={2} />
+              <span>Bulk Import CSV</span>
+            </button>
+            <button type="button" className="dashboard-add-btn" onClick={openAddModal}>
+              <Plus size={18} strokeWidth={2.5} /> Add Product
+            </button>
+          </div>
         </div>
 
         {inventory.length > 4 && (
