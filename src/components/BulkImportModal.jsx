@@ -29,6 +29,7 @@ import {
   TARGET_FIELDS,
   guessColumnMapping,
   parsePrice,
+  parseQuantity,
   parseStatus,
 } from "../utils/csvColumnMapping";
 
@@ -63,6 +64,10 @@ function buildReviewRows(csvRows, mapping) {
     const priceRaw = headerFor.price ? raw[headerFor.price] : "";
     const price = parsePrice(priceRaw);
     const status = headerFor.status ? parseStatus(raw[headerFor.status]) : "available";
+    const quantity = headerFor.quantity ? parseQuantity(raw[headerFor.quantity]) : 0;
+    const sku = headerFor.sku ? (raw[headerFor.sku] ?? "").toString().trim() : "";
+    const description = headerFor.description ? (raw[headerFor.description] ?? "").toString().trim() : "";
+    const unit = headerFor.unit ? (raw[headerFor.unit] ?? "").toString().trim() : "";
 
     const errors = [];
     if (!name) errors.push("Missing product name");
@@ -75,6 +80,10 @@ function buildReviewRows(csvRows, mapping) {
       price: price ?? "", // "" so the input renders empty rather than "null"
       priceRaw,
       status,
+      quantity,
+      sku,
+      description,
+      unit: unit || "piece",
       errors,
       excluded: false,
     };
@@ -198,6 +207,10 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
         category: r.category.trim() || "Uncategorized",
         price: parsePrice(r.price),
         status: r.status,
+        quantity: parseQuantity(r.quantity),
+        sku: r.sku?.trim() || null,
+        description: r.description?.trim() || null,
+        unit: r.unit?.trim() || "piece",
       }));
 
     const { data, error } = await bulkUpsertInventory(storeId, validRows, { overwrite });
@@ -391,8 +404,12 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
                       <th style={{ padding: 6 }}></th>
                       <th style={{ padding: 6 }}>Name</th>
                       <th style={{ padding: 6 }}>Category</th>
+                      <th style={{ padding: 6 }}>SKU</th>
                       <th style={{ padding: 6 }}>Price</th>
+                      <th style={{ padding: 6 }}>Quantity</th>
+                      <th style={{ padding: 6 }}>Unit</th>
                       <th style={{ padding: 6 }}>Status</th>
+                      <th style={{ padding: 6 }}>Description</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -431,6 +448,16 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
                             onChange={(e) => updateRow(row.id, { category: e.target.value })}
                           />
                         </td>
+                        <td style={{ padding: 6, minWidth: 130 }}>
+                          <input
+                            className="pform__input"
+                            style={{ padding: "4px 8px", fontSize: 13 }}
+                            value={row.sku}
+                            disabled={row.excluded}
+                            placeholder="optional"
+                            onChange={(e) => updateRow(row.id, { sku: e.target.value })}
+                          />
+                        </td>
                         <td style={{ padding: 6, minWidth: 100 }}>
                           <input
                             className="pform__input"
@@ -445,6 +472,28 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
                             onChange={(e) => updateRow(row.id, { price: e.target.value })}
                           />
                         </td>
+                        <td style={{ padding: 6, minWidth: 90 }}>
+                          <input
+                            className="pform__input"
+                            type="number"
+                            min="0"
+                            step="1"
+                            style={{ padding: "4px 8px", fontSize: 13 }}
+                            value={row.quantity}
+                            disabled={row.excluded}
+                            onChange={(e) => updateRow(row.id, { quantity: e.target.value })}
+                          />
+                        </td>
+                        <td style={{ padding: 6, minWidth: 90 }}>
+                          <input
+                            className="pform__input"
+                            style={{ padding: "4px 8px", fontSize: 13 }}
+                            value={row.unit}
+                            disabled={row.excluded}
+                            placeholder="piece"
+                            onChange={(e) => updateRow(row.id, { unit: e.target.value })}
+                          />
+                        </td>
                         <td style={{ padding: 6, minWidth: 110 }}>
                           <select
                             className="pform__select"
@@ -457,6 +506,16 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
                             <option value="low">Low Stock</option>
                             <option value="out">Out of Stock</option>
                           </select>
+                        </td>
+                        <td style={{ padding: 6, minWidth: 160 }}>
+                          <input
+                            className="pform__input"
+                            style={{ padding: "4px 8px", fontSize: 13 }}
+                            value={row.description}
+                            disabled={row.excluded}
+                            placeholder="optional"
+                            onChange={(e) => updateRow(row.id, { description: e.target.value })}
+                          />
                         </td>
                       </tr>
                     ))}
