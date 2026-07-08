@@ -69,6 +69,19 @@ function StatusRadioGroup({ currentStatus, onChange, productId }) {
   );
 }
 
+// Units where "15 packs" reads naturally with a trailing "s"; metric
+// units (kg, g, liter, ml) don't pluralize the same way in everyday use,
+// so they're deliberately left alone.
+const PLURALIZABLE_UNITS = new Set(["piece", "pack", "box", "sack", "bottle"]);
+
+function formatStockLine(quantity, unit) {
+  const qty = quantity ?? 0;
+  const u = (unit || "piece").trim();
+  const displayUnit =
+    PLURALIZABLE_UNITS.has(u.toLowerCase()) && qty !== 1 ? `${u}s` : u;
+  return `${qty} ${displayUnit}`;
+}
+
 function ProductCard({ product, onStatusChange, onEdit, onDelete }) {
   const [expanded, setExpanded] = useState(false);
   const [localSaved, setLocalSaved] = useState(false);
@@ -91,6 +104,9 @@ function ProductCard({ product, onStatusChange, onEdit, onDelete }) {
             <span className="product-card__name">{product.name}</span>
             <span className="product-card__category">
               {product.category} · <strong style={{ color: "var(--color-text-primary, #1a1a1a)" }}>{formatPrice(product.price)}</strong>
+            </span>
+            <span className="product-card__stock-line" style={{ fontSize: 12, color: "var(--color-text-muted, #999)" }}>
+              {formatStockLine(product.quantity, product.unit)} in stock
             </span>
           </div>
           <div className="product-card__right">
@@ -119,6 +135,19 @@ function ProductCard({ product, onStatusChange, onEdit, onDelete }) {
             <div className="product-card__timestamp">
               <Clock size={12} />&nbsp;{formatLastUpdated(product.lastUpdated)}
             </div>
+            {/* Graceful degradation: SKU/description only render when
+                present — a null value shows nothing here, not an empty
+                "SKU: " line. */}
+            {product.sku && (
+              <div style={{ fontSize: 12, color: "var(--color-text-muted, #999)", marginTop: 4 }}>
+                SKU: {product.sku}
+              </div>
+            )}
+            {product.description && (
+              <p style={{ fontSize: 12, color: "var(--color-text-muted, #999)", marginTop: 4, lineHeight: 1.5 }}>
+                {product.description}
+              </p>
+            )}
             <StatusRadioGroup currentStatus={product.status} productId={product.id} onChange={handleStatusChange} />
           </motion.div>
         )}
