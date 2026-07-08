@@ -104,6 +104,29 @@ export function guessColumnMapping(headers) {
 }
 
 /**
+ * parseQuantity
+ * Strips commas/whitespace and parses a non-negative integer. Unlike
+ * parsePrice, this is intentionally forgiving — quantity is optional
+ * data, not a blocking requirement, so an unparseable value defaults to
+ * 0 rather than flagging the whole row as invalid. Fractional input
+ * (e.g. "2.5") is floored, since `quantity` is an integer column.
+ *
+ * @param {string|number} raw
+ * @returns {number} always a valid non-negative integer, defaults to 0
+ */
+export function parseQuantity(raw) {
+  if (raw === null || raw === undefined) return 0;
+  if (typeof raw === "number") return Number.isFinite(raw) && raw >= 0 ? Math.floor(raw) : 0;
+
+  const cleaned = String(raw).replace(/,/g, "").trim();
+  if (cleaned === "") return 0;
+
+  const num = Number(cleaned);
+  if (Number.isNaN(num) || num < 0) return 0;
+  return Math.floor(num);
+}
+
+/**
  * parsePrice
  * Strips currency symbols/commas/whitespace and parses a float. Returns
  * null (not 0!) for anything that isn't a valid non-negative number, so
