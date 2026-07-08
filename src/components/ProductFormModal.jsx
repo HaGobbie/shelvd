@@ -116,6 +116,9 @@ export default function ProductFormModal({
   const [category, setCategory]   = useState(CATEGORIES[0]);
   const [price, setPrice]         = useState("");
   const [status, setStatus]       = useState("available");
+  const [description, setDescription] = useState("");
+  const [unit, setUnit]           = useState("piece");
+  const [sku, setSku]             = useState("");
   const [customCategory, setCustomCategory] = useState("");
   const [saving, setSaving]       = useState(false);
   const [error, setError]         = useState("");
@@ -132,6 +135,11 @@ export default function ProductFormModal({
             ? String(initialData.price)
             : ""
         );
+        // Graceful degradation: null/undefined sku or description just
+        // become an empty string in the input, not "null" text.
+        setDescription(initialData.description ?? "");
+        setUnit(initialData.unit ?? "piece");
+        setSku(initialData.sku ?? "");
         // If the stored category matches a preset, select it; otherwise use "Other"
         const match = CATEGORIES.includes(initialData.category);
         setCategory(match ? initialData.category : "Other");
@@ -142,6 +150,9 @@ export default function ProductFormModal({
         setPrice("");
         setStatus("available");
         setCustomCategory("");
+        setDescription("");
+        setUnit("piece");
+        setSku("");
       }
       setError("");
       // Auto-focus the name field after the animation settles
@@ -174,6 +185,12 @@ export default function ProductFormModal({
     const finalCategory =
       category === "Other" ? customCategory.trim() : category;
     const finalPrice = Number(price);
+    // Optional fields: empty string -> null/default rather than storing
+    // an empty string, so "no SKU" reads as genuinely absent, not as a
+    // blank-but-present value.
+    const finalSku = sku.trim() || null;
+    const finalDescription = description.trim() || null;
+    const finalUnit = unit.trim() || "piece";
 
     try {
       if (isEditMode) {
@@ -185,6 +202,9 @@ export default function ProductFormModal({
             category: finalCategory,
             price: finalPrice,
             status,
+            sku: finalSku,
+            description: finalDescription,
+            unit: finalUnit,
           })
           .eq("id", initialData.id);
 
@@ -197,6 +217,9 @@ export default function ProductFormModal({
           category: finalCategory,
           price: finalPrice,
           status,
+          sku: finalSku,
+          description: finalDescription,
+          unit: finalUnit,
         });
 
         if (insertError) throw insertError;
@@ -204,7 +227,15 @@ export default function ProductFormModal({
       onClose();
     } catch (err) {
       console.error("Supabase write failed:", err);
-      setError("Failed to save. Please check your connection and try again.");
+      // The partial unique index on (store_id, sku) throws a specific,
+      // recognizable Postgres error — worth a clearer message than the
+      // generic fallback, since "duplicate key" would otherwise look
+      // like an unexplained failure to the store owner.
+      if (err?.message?.includes("inventory_store_sku_uidx")) {
+        setError("That SKU/Barcode is already used by another product in this store.");
+      } else {
+        setError("Failed to save. Please check your connection and try again.");
+      }
     } finally {
       setSaving(false);
     }
@@ -346,6 +377,67 @@ export default function ProductFormModal({
                     value={price}
                     onChange={(e) => setPrice(e.target.value)}
                   />
+                </div>
+
+                {/* ── Unit (optional) ── */}
+                <div className="pform__field">
+                  <label className="pform__label" htmlFor="pform-unit">
+                    Unit
+                  </label>
+                  <input
+                    id="pform-unit"
+                    className="pform__input"
+                    type="text"
+                    list="pform-unit-options"
+                    placeholder="piece"
+                    value={unit}
+                    onChange={(e) => setUnit(e.target.value)}
+                    maxLength={20}
+                  />
+                  <datalist id="pform-unit-options">
+                    <option value="piece" />
+                    <option value="pack" />
+                    <option value="kg" />
+                    <option value="g" />
+                    <option value="liter" />
+                    <option value="ml" />
+                    <option value="box" />
+                    <option value="sack" />
+                    <option value="bottle" />
+                  </datalist>
+                </div>
+
+                {/* ── SKU / Barcode (optional) ── */}
+                <div className="pform__field">
+                  <label className="pform__label" htmlFor="pform-sku">
+                    SKU / Barcode
+                  </label>
+                  <input
+                    id="pform-sku"
+                    className="pform__input"
+                    type="text"
+                    placeholder="e.g. 4901234567894 (optional)"
+                    value={sku}
+                    onChange={(e) => setSku(e.target.value)}
+                    maxLength={64}
+                  />
+                </div>
+
+                {/* ── Description (optional) ── */}
+                <div className="pform__field">
+                  <label className="pform__label" htmlFor="pform-description">
+                    Description
+                  </label>
+                  <textarea
+                    id="pform-description"
+                    className="pform__input"
+                    style={{ minHeight: 72, resize: "vertical", fontFamily: "inherit" }}
+                    placeholder="Optional details — size, weight, packaging, etc."
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    maxLength={500}
+                  />
+                  <span className="pform__char-count">{description.length}/500</span>
                 </div>
 
                 {/* ── Status ── */}
