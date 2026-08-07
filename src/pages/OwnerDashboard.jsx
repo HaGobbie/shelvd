@@ -1,5 +1,5 @@
 // src/pages/OwnerDashboard.jsx
-// Full Owner Dashboard — now includes:
+// Full Owner Dashboard — includes:
 //   ✅ Google Sign-In + Email/Password login (Supabase Auth)
 //   ✅ Auto-routing: no stores found → StoreRegistrationForm
 //   ✅ MULTI-STORE support: switch between stores tied to one account,
@@ -13,6 +13,7 @@
 //   ✅ inventory.last_updated bumped automatically by a Postgres trigger
 //   ✅ stores.updated_at bumped automatically by a Postgres trigger on
 //      any inventory change (see 02_functions_and_triggers.sql)
+//   ✅ Full Tagalog translation via useLanguage()/t()
 
 import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -40,19 +41,24 @@ import ConfirmDeleteModal from "../components/ConfirmDeleteModal";
 import StoreRegistrationForm from "../components/StoreRegistrationForm";
 import StoreEditModal from "../components/StoreEditModal";
 import BulkImportModal from "../components/BulkImportModal";
+import { useLanguage } from "../i18n/LanguageContext";
 
+// Colors reference CSS custom properties rather than literal hex — see
+// root-tokens-patch.css from the rebrand pass. Labels come from the
+// `status.*` dictionary entries shared with the public-facing badges.
 const STATUS_OPTIONS = [
-  { value: "available", label: "Available",    Icon: PackageCheck, color: "#2ECC71", bg: "rgba(46,204,113,0.1)",  border: "rgba(46,204,113,0.5)"  },
-  { value: "low",       label: "Low Stock",    Icon: AlertTriangle, color: "#F1C40F", bg: "rgba(241,196,15,0.1)", border: "rgba(241,196,15,0.5)" },
-  { value: "out",       label: "Out of Stock", Icon: PackageX,     color: "#E74C3C", bg: "rgba(231,76,60,0.1)",  border: "rgba(231,76,60,0.5)"  },
+  { value: "available", Icon: PackageCheck, color: "var(--color-available)", bg: "var(--color-available-bg)",  border: "var(--color-available-border)"  },
+  { value: "low",       Icon: AlertTriangle, color: "var(--color-low)", bg: "var(--color-low-bg)", border: "var(--color-low-border)" },
+  { value: "out",       Icon: PackageX,     color: "var(--color-out)", bg: "var(--color-out-bg)",  border: "var(--color-out-border)"  },
 ];
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 function StatusRadioGroup({ currentStatus, onChange, productId }) {
+  const { t } = useLanguage();
   return (
     <div className="status-radio-group" role="radiogroup">
-      {STATUS_OPTIONS.map(({ value, label, Icon, color, bg, border }) => {
+      {STATUS_OPTIONS.map(({ value, Icon, color, bg, border }) => {
         const sel = currentStatus === value;
         return (
           <button key={value} type="button" role="radio" aria-checked={sel}
@@ -60,7 +66,7 @@ function StatusRadioGroup({ currentStatus, onChange, productId }) {
             style={sel ? { background: bg, borderColor: border, color } : {}}
             onClick={() => onChange(productId, value)}>
             <Icon size={22} strokeWidth={sel ? 2.5 : 1.8} />
-            <span>{label}</span>
+            <span>{t(`status.${value}`)}</span>
             {sel && <CheckCircle2 size={14} className="status-radio-tile__check" style={{ color }} />}
           </button>
         );
@@ -71,18 +77,21 @@ function StatusRadioGroup({ currentStatus, onChange, productId }) {
 
 // Units where "15 packs" reads naturally with a trailing "s"; metric
 // units (kg, g, liter, ml) don't pluralize the same way in everyday use,
-// so they're deliberately left alone.
+// so they're deliberately left alone. (Tagalog doesn't pluralize nouns
+// with a suffix at all, so this only applies in English.)
 const PLURALIZABLE_UNITS = new Set(["piece", "pack", "box", "sack", "bottle"]);
 
-function formatStockLine(quantity, unit) {
+function formatStockLine(quantity, unit, language) {
   const qty = quantity ?? 0;
   const u = (unit || "piece").trim();
+  if (language === "tl") return `${qty} ${u}`;
   const displayUnit =
     PLURALIZABLE_UNITS.has(u.toLowerCase()) && qty !== 1 ? `${u}s` : u;
   return `${qty} ${displayUnit}`;
 }
 
 function ProductCard({ product, onStatusChange, onEdit, onDelete }) {
+  const { t, language } = useLanguage();
   const [expanded, setExpanded] = useState(false);
   const [localSaved, setLocalSaved] = useState(false);
   const cfg = STATUS_OPTIONS.find((o) => o.value === product.status);
@@ -103,26 +112,26 @@ function ProductCard({ product, onStatusChange, onEdit, onDelete }) {
           <div className="product-card__info">
             <span className="product-card__name">{product.name}</span>
             <span className="product-card__category">
-              {product.category} · <strong style={{ color: "var(--color-text-primary, #1a1a1a)" }}>{formatPrice(product.price)}</strong>
+              {product.category} · <strong style={{ color: "var(--color-text-primary)" }}>{formatPrice(product.price)}</strong>
             </span>
-            <span className="product-card__stock-line" style={{ fontSize: 12, color: "var(--color-text-muted, #999)" }}>
-              {formatStockLine(product.quantity, product.unit)} in stock
+            <span className="product-card__stock-line" style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
+              {formatStockLine(product.quantity, product.unit, language)}
             </span>
           </div>
           <div className="product-card__right">
             {localSaved
-              ? <span className="product-card__saved"><CheckCircle2 size={14} /> Saved</span>
-              : <span className="product-card__status-pill" style={{ color: cfg?.color, borderColor: cfg?.color }}>{cfg?.label}</span>}
+              ? <span className="product-card__saved"><CheckCircle2 size={14} /> {t("owner.dashboard.saved")}</span>
+              : <span className="product-card__status-pill" style={{ color: cfg?.color, borderColor: cfg?.color }}>{t(`status.${product.status}`)}</span>}
             <span className={`product-card__chevron ${expanded ? "product-card__chevron--open" : ""}`}>▾</span>
           </div>
         </button>
         <div className="product-card__actions">
           <button type="button" className="product-card__action-btn product-card__action-btn--edit"
-            onClick={() => onEdit(product)} aria-label={`Edit ${product.name}`} title="Edit">
+            onClick={() => onEdit(product)} aria-label={t("owner.dashboard.editAria", product.name)} title={t("owner.dashboard.edit")}>
             <Pencil size={15} strokeWidth={2} />
           </button>
           <button type="button" className="product-card__action-btn product-card__action-btn--delete"
-            onClick={() => onDelete(product)} aria-label={`Delete ${product.name}`} title="Delete">
+            onClick={() => onDelete(product)} aria-label={t("owner.dashboard.deleteAria", product.name)} title={t("owner.dashboard.delete")}>
             <Trash2 size={15} strokeWidth={2} />
           </button>
         </div>
@@ -139,12 +148,12 @@ function ProductCard({ product, onStatusChange, onEdit, onDelete }) {
                 present — a null value shows nothing here, not an empty
                 "SKU: " line. */}
             {product.sku && (
-              <div style={{ fontSize: 12, color: "var(--color-text-muted, #999)", marginTop: 4 }}>
+              <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 4 }}>
                 SKU: {product.sku}
               </div>
             )}
             {product.description && (
-              <p style={{ fontSize: 12, color: "var(--color-text-muted, #999)", marginTop: 4, lineHeight: 1.5 }}>
+              <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 4, lineHeight: 1.5 }}>
                 {product.description}
               </p>
             )}
@@ -158,6 +167,7 @@ function ProductCard({ product, onStatusChange, onEdit, onDelete }) {
 
 // ─── Login screen with Google + Email (Supabase Auth) ────────────────────────
 function LoginScreen() {
+  const { t } = useLanguage();
   const [showEmailForm, setShowEmailForm] = useState(false);
   const [email, setEmail]         = useState("");
   const [password, setPassword]   = useState("");
@@ -185,7 +195,7 @@ function LoginScreen() {
       options: { redirectTo: window.location.origin + window.location.pathname },
     });
     if (oauthError) {
-      setError("Google sign-in failed. Please try again.");
+      setError(t("owner.login.googleFailed"));
       setGLoading(false);
     }
   };
@@ -195,11 +205,11 @@ function LoginScreen() {
     const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
     if (signInError) {
       if (signInError.message.toLowerCase().includes("invalid login credentials")) {
-        setError("Incorrect email or password.");
+        setError(t("owner.login.incorrectCreds"));
       } else if (signInError.message.toLowerCase().includes("rate limit")) {
-        setError("Too many attempts. Please wait before trying again.");
+        setError(t("owner.login.rateLimited"));
       } else {
-        setError("Sign-in failed. Check your connection and try again.");
+        setError(t("owner.login.signInFailed"));
       }
     }
     setLoading(false);
@@ -209,10 +219,13 @@ function LoginScreen() {
     <div className="login-screen">
       <div className="login-card">
         <div className="login-card__logo"><Store size={36} /></div>
-        <h1 className="login-card__title">Store Owner Portal</h1>
-        <p className="login-card__subtitle">Sign in to manage your store's inventory for the community.</p>
+        <h1 className="login-card__title">{t("owner.login.title")}</h1>
+        <p className="login-card__subtitle">{t("owner.login.subtitle")}</p>
 
-        {/* Google button */}
+        {/* Google button — brand colors below are Google's own official
+            colors for the "Sign in with Google" button and must stay
+            exactly as-is per Google's brand guidelines, regardless of
+            app theme. */}
         <button type="button" className="google-signin-btn" onClick={handleGoogle} disabled={gLoading || loading}>
           {gLoading
             ? <span className="map-loading-spinner" style={{ width: 20, height: 20, borderWidth: 2.5, borderTopColor: "#4285F4" }} />
@@ -224,39 +237,39 @@ function LoginScreen() {
                 <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
               </svg>
             )}
-          {gLoading ? "Signing in…" : "Continue with Google"}
+          {gLoading ? t("owner.login.signingIn") : t("owner.login.continueGoogle")}
         </button>
 
-        <div className="login-divider"><span>or</span></div>
+        <div className="login-divider"><span>{t("owner.login.or")}</span></div>
 
         {/* Email toggle */}
         <AnimatePresence initial={false}>
           {!showEmailForm ? (
             <motion.button key="toggle" type="button" className="login-email-toggle"
               onClick={() => setShowEmailForm(true)} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-              Sign in with Email & Password
+              {t("owner.login.signInEmail")}
             </motion.button>
           ) : (
             <motion.form key="emailform" onSubmit={handleEmail} className="login-form" noValidate
               initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }}
               exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.25 }} style={{ overflow: "hidden" }}>
               <div className="login-form__field">
-                <label htmlFor="owner-email">Email address</label>
+                <label htmlFor="owner-email">{t("owner.login.emailLabel")}</label>
                 <input id="owner-email" type="email" placeholder="owner@example.com"
                   value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" required />
               </div>
               <div className="login-form__field">
-                <label htmlFor="owner-password">Password</label>
+                <label htmlFor="owner-password">{t("owner.login.passwordLabel")}</label>
                 <input id="owner-password" type="password" placeholder="••••••••"
                   value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required />
               </div>
               <button type="submit" className="login-form__submit" disabled={loading || gLoading}>
                 {loading ? <span className="map-loading-spinner" style={{ width: 18, height: 18, borderWidth: 2 }} /> : <LogIn size={18} />}
-                {loading ? "Signing in…" : "Sign In"}
+                {loading ? t("owner.login.signingIn") : t("owner.login.signIn")}
               </button>
               <button type="button" onClick={() => setShowEmailForm(false)}
                 style={{ fontSize: 13, color: "var(--color-text-muted)", marginTop: 4, textAlign: "center", width: "100%" }}>
-                ← Back
+                {t("owner.login.back")}
               </button>
             </motion.form>
           )}
@@ -274,6 +287,7 @@ function LoginScreen() {
 
 // ─── Non-blocking approval status banner ─────────────────────────────────────
 function ApprovalBanner({ store }) {
+  const { t } = useLanguage();
   if (store.status === "approved") return null;
 
   const isRejected = store.status === "rejected";
@@ -288,16 +302,16 @@ function ApprovalBanner({ store }) {
         marginBottom: 16,
         fontSize: 13,
         fontWeight: 600,
-        background: isRejected ? "rgba(231,76,60,0.1)" : "rgba(241,196,15,0.12)",
-        border: `1px solid ${isRejected ? "rgba(231,76,60,0.4)" : "rgba(241,196,15,0.45)"}`,
-        color: isRejected ? "#E74C3C" : "#B7860B",
+        background: isRejected ? "var(--color-out-bg)" : "var(--color-low-bg)",
+        border: `1px solid ${isRejected ? "var(--color-out-border)" : "var(--color-low-border)"}`,
+        color: isRejected ? "var(--color-out)" : "var(--color-low)",
       }}
     >
       {isRejected ? <AlertTriangle size={16} /> : <Clock size={16} />}
       <span>
         {isRejected
-          ? `Registration rejected${store.rejectionReason ? `: ${store.rejectionReason}` : ""}. You can still manage inventory, but this store won't appear on the public map until it's re-approved.`
-          : "Pending barangay approval — this store won't appear on the public map yet, but you can manage its inventory now."}
+          ? t("owner.dashboard.approvalRejected", store.rejectionReason)
+          : t("owner.dashboard.approvalPending")}
       </span>
     </div>
   );
@@ -308,6 +322,7 @@ function ApprovalBanner({ store }) {
 // scoped to deleting a STORE rather than a product, since that component
 // is hardcoded for product deletion.
 function DeleteStoreConfirm({ isOpen, onClose, store, onDeleted }) {
+  const { t } = useLanguage();
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
 
@@ -318,7 +333,7 @@ function DeleteStoreConfirm({ isOpen, onClose, store, onDeleted }) {
     const { error: deleteError } = await deleteStore(store.id);
     if (deleteError) {
       console.error("Delete store failed:", deleteError);
-      setError("Could not delete. Please check your connection and try again.");
+      setError(t("owner.confirmDelete.error"));
       setDeleting(false);
       return;
     }
@@ -349,26 +364,26 @@ function DeleteStoreConfirm({ isOpen, onClose, store, onDeleted }) {
             <div className="confirm-dialog__icon-wrap">
               <AlertTriangle size={28} className="confirm-dialog__icon" />
             </div>
-            <h3 className="confirm-dialog__title">Delete This Store?</h3>
-            <p className="confirm-dialog__desc">You are about to permanently remove</p>
+            <h3 className="confirm-dialog__title">{t("owner.dashboard.deleteStoreTitle")}</h3>
+            <p className="confirm-dialog__desc">{t("owner.dashboard.deleteStoreDesc1")}</p>
             <p className="confirm-dialog__product-name">"{store.name}"</p>
             <p className="confirm-dialog__desc" style={{ marginTop: 4 }}>
-              and all of its inventory. This cannot be undone.
+              {t("owner.dashboard.deleteStoreDesc2")}
             </p>
             {error && <p className="confirm-dialog__error">⚠️ {error}</p>}
             <div className="confirm-dialog__actions">
               <button type="button" className="confirm-dialog__cancel" onClick={onClose} disabled={deleting}>
-                <X size={16} /> Cancel
+                <X size={16} /> {t("owner.confirmDelete.cancel")}
               </button>
               <button type="button" className="confirm-dialog__delete" onClick={handleDelete} disabled={deleting}>
                 {deleting ? (
                   <>
                     <span className="map-loading-spinner" style={{ width: 16, height: 16, borderWidth: 2, borderTopColor: "#fff" }} />
-                    Deleting…
+                    {t("owner.confirmDelete.deleting")}
                   </>
                 ) : (
                   <>
-                    <Trash2 size={16} /> Yes, Delete
+                    <Trash2 size={16} /> {t("owner.confirmDelete.confirm")}
                   </>
                 )}
               </button>
@@ -382,6 +397,7 @@ function DeleteStoreConfirm({ isOpen, onClose, store, onDeleted }) {
 
 // ─── Store switcher ───────────────────────────────────────────────────────────
 function StoreSwitcher({ stores, selectedStoreId, onSelect }) {
+  const { t } = useLanguage();
   if (stores.length <= 1) return null;
 
   return (
@@ -389,11 +405,11 @@ function StoreSwitcher({ stores, selectedStoreId, onSelect }) {
       <select
         value={selectedStoreId ?? ""}
         onChange={(e) => onSelect(e.target.value)}
-        aria-label="Switch store"
+        aria-label={t("owner.dashboard.switchStoreAria")}
         style={{
           appearance: "none",
-          background: "var(--color-surface, #fff)",
-          border: "1px solid var(--color-border, #ddd)",
+          background: "var(--color-surface)",
+          border: "1px solid var(--color-border)",
           borderRadius: "var(--radius-md, 8px)",
           padding: "6px 30px 6px 10px",
           fontSize: 13,
@@ -403,7 +419,7 @@ function StoreSwitcher({ stores, selectedStoreId, onSelect }) {
       >
         {stores.map((s) => (
           <option key={s.id} value={s.id}>
-            {s.name}{s.status !== "approved" ? ` (${s.status === "rejected" ? "Rejected" : "Pending"})` : ""}
+            {s.name}{s.status !== "approved" ? ` (${s.status === "rejected" ? t("owner.dashboard.rejected") : t("owner.dashboard.pending")})` : ""}
           </option>
         ))}
       </select>
@@ -417,6 +433,7 @@ function StoreSwitcher({ stores, selectedStoreId, onSelect }) {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function OwnerDashboard({ session }) {
+  const { t } = useLanguage();
   const user = session?.user ?? null;
 
   const { stores, checked: storesChecked, loading: storesLoading, refetch: refetchStores } = useMyStores(user?.id ?? null);
@@ -485,7 +502,7 @@ export default function OwnerDashboard({ session }) {
 
   if (!storesChecked || storesLoading) return (
     <div className="login-screen">
-      <div className="dashboard-loading"><div className="map-loading-spinner" /><span>Loading your stores…</span></div>
+      <div className="dashboard-loading"><div className="map-loading-spinner" /><span>{t("owner.dashboard.loadingStores")}</span></div>
     </div>
   );
 
@@ -509,7 +526,7 @@ export default function OwnerDashboard({ session }) {
           <button type="button"
             style={{ fontSize: 13, color: "var(--color-text-muted)", textDecoration: "underline" }}
             onClick={() => supabase.auth.signOut()}>
-            Sign out and use a different account
+            {t("owner.dashboard.signOutDifferent")}
           </button>
         </div>
       </div>
@@ -542,7 +559,7 @@ export default function OwnerDashboard({ session }) {
         <div className="dashboard-header__left">
           <Store size={22} />
           <div>
-            <h1 className="dashboard-header__title">{myStore?.name ?? "My Store"}</h1>
+            <h1 className="dashboard-header__title">{myStore?.name ?? t("owner.dashboard.myStore")}</h1>
             <span className="dashboard-header__subtitle">
               {myStore?.type ? `${myStore.type} · ` : ""}{user.email}
             </span>
@@ -552,30 +569,30 @@ export default function OwnerDashboard({ session }) {
           <StoreSwitcher stores={stores} selectedStoreId={selectedStoreId} onSelect={setSelectedStoreId} />
           <button type="button" className="dashboard-header__edit-store" onClick={() => setAddingStore(true)}>
             <Plus size={16} strokeWidth={2} />
-            <span>Add Store</span>
+            <span>{t("owner.dashboard.addStore")}</span>
           </button>
           <button
             type="button"
             className="dashboard-header__edit-store"
             onClick={() => setStoreEditOpen(true)}
-            aria-label="Edit store profile and location"
-            title="Edit Store"
+            aria-label={t("owner.dashboard.editStoreAria")}
+            title={t("owner.dashboard.editStoreLabel")}
           >
             <Settings size={16} strokeWidth={2} />
-            <span>Edit Store</span>
+            <span>{t("owner.dashboard.editStoreLabel")}</span>
           </button>
           <button
             type="button"
             className="dashboard-header__edit-store"
             onClick={() => setDeleteStoreConfirmOpen(true)}
-            aria-label="Delete this store"
-            title="Delete Store"
-            style={{ color: "#E74C3C", borderColor: "rgba(231,76,60,0.4)" }}
+            aria-label={t("owner.dashboard.deleteStoreAria")}
+            title={t("owner.dashboard.deleteStoreLabel")}
+            style={{ color: "var(--color-out)", borderColor: "var(--color-out-border)" }}
           >
             <Trash2 size={16} strokeWidth={2} />
-            <span>Delete Store</span>
+            <span>{t("owner.dashboard.deleteStoreLabel")}</span>
           </button>
-          <button className="dashboard-header__logout" onClick={() => supabase.auth.signOut()} type="button">Sign Out</button>
+          <button className="dashboard-header__logout" onClick={() => supabase.auth.signOut()} type="button">{t("owner.dashboard.signOut")}</button>
         </div>
       </header>
 
@@ -584,9 +601,11 @@ export default function OwnerDashboard({ session }) {
 
         <div className="dashboard-toolbar">
           <div className="dashboard-section-label">
-            <Package size={14} />&nbsp;Inventory
+            <Package size={14} />&nbsp;{t("owner.dashboard.inventory")}
             <span className="dashboard-toolbar__count">
-              {filteredInventory.length}{filterQuery ? ` of ${inventory.length}` : ""} products
+              {filterQuery
+                ? t("owner.dashboard.productsCountFiltered", filteredInventory.length, inventory.length)
+                : t("owner.dashboard.productsCount", filteredInventory.length)}
             </span>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -605,15 +624,15 @@ export default function OwnerDashboard({ session }) {
                 fontFamily: "var(--font-heading, inherit)",
                 whiteSpace: "nowrap",
                 background: "transparent",
-                color: "var(--color-brand-primary, #2C3E50)",
-                border: "1.5px solid var(--color-brand-primary, #2C3E50)",
+                color: "var(--color-brand-primary)",
+                border: "1.5px solid var(--color-brand-primary)",
               }}
             >
               <UploadCloud size={16} strokeWidth={2} />
-              <span>Bulk Import CSV</span>
+              <span>{t("owner.dashboard.bulkImportCsv")}</span>
             </button>
             <button type="button" className="dashboard-add-btn" onClick={openAddModal}>
-              <Plus size={18} strokeWidth={2.5} /> Add Product
+              <Plus size={18} strokeWidth={2.5} /> {t("owner.dashboard.addProduct")}
             </button>
           </div>
         </div>
@@ -621,7 +640,7 @@ export default function OwnerDashboard({ session }) {
         {inventory.length > 4 && (
           <div className="dashboard-filter">
             <input type="search" className="dashboard-filter__input"
-              placeholder="Filter by name or category…" value={filterQuery}
+              placeholder={t("owner.dashboard.filterPlaceholder")} value={filterQuery}
               onChange={(e) => setFilterQuery(e.target.value)} />
             {filterQuery && (
               <button className="dashboard-filter__clear" onClick={() => setFilterQuery("")} type="button">✕</button>
@@ -630,21 +649,21 @@ export default function OwnerDashboard({ session }) {
         )}
 
         <p className="dashboard-hint">
-          Tap a product to update its status. Use the pencil to edit details or the bin icon to remove a product.
+          {t("owner.dashboard.hint")}
         </p>
 
         {inventory.length === 0 && (
           <div className="dashboard-empty">
             <Package size={36} style={{ opacity: 0.3 }} />
-            <span>No products yet.</span>
+            <span>{t("owner.dashboard.noProducts")}</span>
             <button type="button" className="dashboard-add-btn" onClick={openAddModal} style={{ marginTop: 8 }}>
-              <Plus size={18} /> Add Your First Product
+              <Plus size={18} /> {t("owner.dashboard.addFirstProduct")}
             </button>
           </div>
         )}
 
         {inventory.length > 0 && filteredInventory.length === 0 && (
-          <div className="dashboard-empty">No products match "{filterQuery}".</div>
+          <div className="dashboard-empty">{t("owner.dashboard.noMatch", filterQuery)}</div>
         )}
 
         <div className="dashboard-product-list">
