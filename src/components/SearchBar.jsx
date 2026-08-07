@@ -6,6 +6,7 @@
 
 import React, { useRef, useEffect, useCallback } from "react";
 import { Search, X, MapPin } from "lucide-react";
+import { useLanguage } from "../i18n/LanguageContext";
 
 const DEBOUNCE_MS = 280;
 
@@ -29,6 +30,7 @@ export default function SearchBar({
   resultCount = 0,
   loading = false,
 }) {
+  const { t } = useLanguage();
   const inputRef = useRef(null);
   const debounceRef = useRef(null);
 
@@ -80,13 +82,13 @@ export default function SearchBar({
           ref={inputRef}
           type="search"
           className="searchbar-input"
-          placeholder="Search for a product near you…"
+          placeholder={t("search.placeholder")}
           defaultValue={value}
           onInput={handleInput}
           autoComplete="off"
           autoCorrect="off"
           spellCheck="false"
-          aria-label="Search for a product"
+          aria-label={t("search.label")}
           enterKeyHint="search"
         />
 
@@ -95,7 +97,7 @@ export default function SearchBar({
           <button
             className="searchbar-clear-btn"
             onClick={handleClear}
-            aria-label="Clear search"
+            aria-label={t("search.clear")}
             type="button"
           >
             <X size={18} strokeWidth={2.5} />
@@ -109,8 +111,8 @@ export default function SearchBar({
           <MapPin size={12} />
           <span>
             {resultCount > 0
-              ? `${resultCount} store${resultCount !== 1 ? "s" : ""} found nearby`
-              : "No stores found — try a different product name"}
+              ? t("search.resultsFound", resultCount)
+              : t("search.noResults")}
           </span>
         </div>
       )}

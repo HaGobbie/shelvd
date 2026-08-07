@@ -10,6 +10,10 @@
 // (read-only) columns derived from it, so we never write those directly.
 // PostgREST/Postgres accepts an EWKT string like "SRID=4326;POINT(lng lat)"
 // for a geography column, so we just send that as a plain string value.
+//
+// NOTE ON STORE_TYPES: dropdown values stay in English regardless of UI
+// language — stored as-is in the DB and shown on the public map, so only
+// the surrounding labels/messages are translated, not the stored value.
 
 import React, { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -33,6 +37,7 @@ import {
   Phone,
 } from "lucide-react";
 import { supabase } from "../config/supabaseClient";
+import { useLanguage } from "../i18n/LanguageContext";
 
 // ─── Leaflet icon fix ─────────────────────────────────────────────────────────
 delete L.Icon.Default.prototype._getIconUrl;
@@ -42,12 +47,17 @@ L.Icon.Default.mergeOptions({
   shadowUrl:     "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
 });
 
-// Red draggable pin — same as registration form for visual consistency
+// Terracotta draggable pin — same as registration form for visual
+// consistency. NOTE: this is a literal hex, not var(--color-brand-primary)
+// — it's baked into a raw SVG string for L.divIcon(), and SVG fill="..."
+// attributes don't support var() CSS syntax (only an actual style="..."
+// property does). If the brand accent color changes again, this needs
+// updating by hand in both this file and StoreRegistrationForm.jsx.
 const STORE_PIN_ICON = L.divIcon({
   html: `
     <div style="position:relative;width:36px;height:36px;">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="36" height="36">
-        <path fill="#E74C3C" stroke="#fff" stroke-width="1.2"
+        <path fill="#C85A27" stroke="#fff" stroke-width="1.2"
           d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/>
         <circle cx="12" cy="9" r="2.8" fill="white"/>
       </svg>
@@ -74,12 +84,6 @@ const sheetVariants = {
   visible: { y: 0, opacity: 1, transition: { type: "spring", damping: 28, stiffness: 300, mass: 0.9 } },
   exit:    { y: "100%", opacity: 0, transition: { type: "tween", ease: "easeIn", duration: 0.2 } },
 };
-
-// ─── Tabs ─────────────────────────────────────────────────────────────────────
-const TABS = [
-  { id: "details",  label: "Store Details", Icon: Store  },
-  { id: "location", label: "GIS Location",  Icon: MapPin },
-];
 
 // ─── Leaflet inner helpers ────────────────────────────────────────────────────
 function ClickHandler({ onMapClick }) {
@@ -127,6 +131,14 @@ function ForceMapHeight({ height }) {
  * }} props
  */
 export default function StoreEditModal({ isOpen, onClose, store }) {
+  const { t } = useLanguage();
+
+  // Tabs defined inside the component so their labels react to language changes
+  const TABS = [
+    { id: "details",  label: t("owner.storeEdit.tabDetails"), Icon: Store  },
+    { id: "location", label: t("owner.storeEdit.tabLocation"), Icon: MapPin },
+  ];
+
   const [activeTab, setActiveTab]       = useState("details");
 
   // ── Form state ────────────────────────────────────────────────────────────
@@ -171,11 +183,11 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
   // ── Validation ────────────────────────────────────────────────────────────
   const validate = () => {
     const errs = {};
-    if (!name.trim())          errs.name          = "Store name is required.";
-    if (!type)                 errs.type          = "Please select a store type.";
-    if (!ownerName.trim())     errs.ownerName     = "Owner name is required.";
-    if (!contactNumber.trim()) errs.contactNumber = "Contact number is required.";
-    if (lat === null || lng === null) errs.coords = "Please set your store's location on the map.";
+    if (!name.trim())          errs.name          = t("owner.storeEdit.nameRequired");
+    if (!type)                 errs.type          = t("owner.storeEdit.typeRequired");
+    if (!ownerName.trim())     errs.ownerName     = t("owner.storeEdit.ownerRequired");
+    if (!contactNumber.trim()) errs.contactNumber = t("owner.storeEdit.contactRequired");
+    if (lat === null || lng === null) errs.coords = t("owner.storeEdit.coordsRequired");
     return errs;
   };
 
@@ -191,7 +203,7 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
       });
       const results = await res.json();
       if (results.length === 0) {
-        setGeocodeError("Address not found. Try a different search or pin manually.");
+        setGeocodeError(t("owner.storeEdit.addressNotFound"));
         return;
       }
       const newLat = parseFloat(results[0].lat);
@@ -202,11 +214,11 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
       setFlyTarget([newLat, newLng]);
       setErrors((prev) => ({ ...prev, coords: undefined }));
     } catch {
-      setGeocodeError("Geocoding failed. Check your connection or pin manually.");
+      setGeocodeError(t("owner.storeEdit.geocodeFailed"));
     } finally {
       setGeocoding(false);
     }
-  }, [searchQuery]);
+  }, [searchQuery, t]);
 
   const handleMapClick = useCallback((newLat, newLng) => {
     setLat(newLat);
@@ -249,7 +261,7 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
 
     if (updateError) {
       console.error("Store update failed:", updateError);
-      setSaveError("Failed to save. Please check your connection and try again.");
+      setSaveError(t("owner.storeEdit.saveFailed"));
       setSaving(false);
       return;
     }
@@ -291,7 +303,7 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
             onDragEnd={(_, info) => { if (info.offset.y > 120) onClose(); }}
             role="dialog"
             aria-modal="true"
-            aria-label="Edit store profile"
+            aria-label={t("owner.storeEdit.title")}
           >
             {/* Drag handle */}
             <div className="sheet-handle" aria-hidden="true" />
@@ -299,12 +311,12 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
             {/* Header */}
             <div className="sheet-header">
               <div className="sheet-header__info">
-                <h2 className="sheet-header__name">Edit Store Profile</h2>
+                <h2 className="sheet-header__name">{t("owner.storeEdit.title")}</h2>
                 <span className="sheet-header__type">
-                  Changes are saved to your public map listing.
+                  {t("owner.storeEdit.subtitle")}
                 </span>
               </div>
-              <button className="sheet-close-btn" onClick={onClose} aria-label="Close" type="button">
+              <button className="sheet-close-btn" onClick={onClose} aria-label={t("owner.product.close")} type="button">
                 <X size={20} strokeWidth={2} />
               </button>
             </div>
@@ -337,7 +349,7 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
                 <div>
                   <div className="regform__field">
                     <label className="regform__label" htmlFor="se-name">
-                      Store Name <span className="pform__required">*</span>
+                      {t("owner.storeEdit.nameLabel")} <span className="pform__required">*</span>
                     </label>
                     <input
                       id="se-name"
@@ -353,7 +365,7 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
 
                   <div className="regform__field">
                     <label className="regform__label" htmlFor="se-type">
-                      Store Type <span className="pform__required">*</span>
+                      {t("owner.storeEdit.typeLabel")} <span className="pform__required">*</span>
                     </label>
                     <select
                       id="se-type"
@@ -361,15 +373,15 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
                       value={type}
                       onChange={(e) => { setType(e.target.value); setErrors((p) => ({ ...p, type: undefined })); }}
                     >
-                      <option value="">— Select a type —</option>
-                      {STORE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                      <option value="">{t("owner.storeEdit.selectType")}</option>
+                      {STORE_TYPES.map((st) => <option key={st} value={st}>{st}</option>)}
                     </select>
                     {errors.type && <span className="regform__field-error"><AlertTriangle size={12} /> {errors.type}</span>}
                   </div>
 
                   <div className="regform__field">
                     <label className="regform__label" htmlFor="se-owner">
-                      Owner / Manager Name <span className="pform__required">*</span>
+                      {t("owner.storeEdit.ownerLabel")} <span className="pform__required">*</span>
                     </label>
                     <input
                       id="se-owner"
@@ -384,7 +396,7 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
 
                   <div className="regform__field">
                     <label className="regform__label" htmlFor="se-contact">
-                      Contact Number <span className="pform__required">*</span>
+                      {t("owner.storeEdit.contactLabel")} <span className="pform__required">*</span>
                     </label>
                     <input
                       id="se-contact"
@@ -403,19 +415,19 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
               {activeTab === "location" && (
                 <div>
                   <p style={{ fontSize: "var(--text-sm)", color: "var(--color-text-secondary)", marginBottom: "var(--space-4)", lineHeight: 1.6 }}>
-                    Search for your address or tap the map to move your pin to a new location. Drag the pin to fine-tune.
+                    {t("owner.storeEdit.locationHint")}
                   </p>
 
                   {/* Address geocode */}
                   <div className="regform__field">
-                    <label className="regform__label" htmlFor="se-address">Street Address</label>
+                    <label className="regform__label" htmlFor="se-address">{t("owner.storeEdit.addressLabel")}</label>
                     <div className="regform__geocode-row">
                       <input
                         id="se-address"
                         className="pform__input"
                         style={{ flex: 1 }}
                         type="text"
-                        placeholder="e.g. Blk 4 Lot 12, Catalunan Grande"
+                        placeholder={t("owner.storeEdit.addressPlaceholder")}
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                         onKeyDown={(e) => e.key === "Enter" && handleGeocode()}
@@ -425,7 +437,7 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
                         className="regform__geocode-btn"
                         onClick={handleGeocode}
                         disabled={geocoding || !searchQuery.trim()}
-                        aria-label="Search address"
+                        aria-label={t("search.label")}
                       >
                         {geocoding
                           ? <Loader2 size={18} className="regform__spin" />
@@ -449,7 +461,7 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
                     <div className="regform__map-hint">
                       {hasCoords
                         ? `📍 ${lat.toFixed(6)}, ${lng.toFixed(6)}`
-                        : "Tap the map to place a pin"}
+                        : t("owner.storeEdit.tapToPlace")}
                     </div>
                     <MapContainer
                       center={hasCoords ? [lat, lng] : [7.0508, 125.5694]}
@@ -482,7 +494,7 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
                   {hasCoords && (
                     <div className="regform__coord-row" style={{ marginTop: 12 }}>
                       <div className="regform__coord-field">
-                        <label className="regform__label">Latitude</label>
+                        <label className="regform__label">{t("owner.storeEdit.latitude")}</label>
                         <input
                           className="pform__input"
                           type="number"
@@ -492,7 +504,7 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
                         />
                       </div>
                       <div className="regform__coord-field">
-                        <label className="regform__label">Longitude</label>
+                        <label className="regform__label">{t("owner.storeEdit.longitude")}</label>
                         <input
                           className="pform__input"
                           type="number"
@@ -525,14 +537,14 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
                 style={saved ? { background: "var(--color-available)" } : {}}
               >
                 {saved ? (
-                  <><span>✓</span> Saved!</>
+                  <><span>✓</span> {t("owner.storeEdit.saved")}</>
                 ) : saving ? (
                   <>
                     <span className="map-loading-spinner" style={{ width: 18, height: 18, borderWidth: 2, borderTopColor: "#fff" }} />
-                    Saving…
+                    {t("owner.storeEdit.saving")}
                   </>
                 ) : (
-                  <><Save size={18} /> Save Changes</>
+                  <><Save size={18} /> {t("owner.storeEdit.saveChanges")}</>
                 )}
               </button>
             </div>

@@ -10,6 +10,12 @@
 // prop for every row, in bulkUpsertInventory() (useStores.js) — never
 // taken from the CSV, even if a column happened to be named that.
 //
+// NOTE: TARGET_FIELDS labels (used in the column-mapping dropdown) come
+// from csvColumnMapping.js and are NOT translated — they describe DATABASE
+// fields being matched against a CSV the owner uploaded in whatever
+// language it's in, so keeping them in English keeps the mapping
+// unambiguous rather than potentially confusing a technical matching step.
+//
 // Requires: npm install papaparse
 
 import React, { useState, useCallback, useRef } from "react";
@@ -32,6 +38,7 @@ import {
   parseQuantity,
   parseStatus,
 } from "../utils/csvColumnMapping";
+import { useLanguage } from "../i18n/LanguageContext";
 
 // ─── Animation (matches the rest of the app's sheet/modal language) ─────────
 const overlayVariants = {
@@ -51,7 +58,7 @@ let nextRowId = 1;
  * Turns raw CSV rows (array of {header: value} objects) + a confirmed
  * column mapping into validated review rows.
  */
-function buildReviewRows(csvRows, mapping) {
+function buildReviewRows(csvRows, mapping, t) {
   // Invert mapping: targetField -> csvHeader
   const headerFor = {};
   for (const [header, field] of Object.entries(mapping)) {
@@ -70,8 +77,8 @@ function buildReviewRows(csvRows, mapping) {
     const unit = headerFor.unit ? (raw[headerFor.unit] ?? "").toString().trim() : "";
 
     const errors = [];
-    if (!name) errors.push("Missing product name");
-    if (price === null) errors.push(`Invalid or missing price ("${priceRaw ?? ""}")`);
+    if (!name) errors.push(t("owner.bulkImport.missingName"));
+    if (price === null) errors.push(t("owner.bulkImport.invalidPrice", priceRaw ?? ""));
 
     return {
       id: nextRowId++,
@@ -96,6 +103,7 @@ function buildReviewRows(csvRows, mapping) {
  * @param {{ isOpen: boolean, onClose: Function, storeId: string, onImported?: Function }} props
  */
 export default function BulkImportModal({ isOpen, onClose, storeId, onImported }) {
+  const { t } = useLanguage();
   const [step, setStep] = useState("upload");
   const [fileName, setFileName] = useState("");
   const [parseError, setParseError] = useState("");
@@ -138,7 +146,7 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
       complete: (results) => {
         const headers = results.meta.fields ?? [];
         if (headers.length === 0 || results.data.length === 0) {
-          setParseError("This file doesn't look like a valid CSV, or it's empty.");
+          setParseError(t("owner.bulkImport.invalidFile"));
           return;
         }
         setCsvHeaders(headers);
@@ -147,10 +155,10 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
         setStep("mapping");
       },
       error: (err) => {
-        setParseError(`Couldn't read this file: ${err.message}`);
+        setParseError(t("owner.bulkImport.readError", err.message));
       },
     });
-  }, []);
+  }, [t]);
 
   const handleFileInputChange = (e) => handleFile(e.target.files?.[0]);
 
@@ -165,7 +173,7 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
     .every((f) => Object.values(columnMapping).includes(f.key));
 
   const proceedToReview = () => {
-    const rows = buildReviewRows(csvRows, columnMapping);
+    const rows = buildReviewRows(csvRows, columnMapping, t);
     setReviewRows(rows);
     setStep("review");
   };
@@ -181,9 +189,9 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
         if (r.id !== id) return r;
         const updated = { ...r, ...patch };
         const errors = [];
-        if (!updated.name?.trim()) errors.push("Missing product name");
+        if (!updated.name?.trim()) errors.push(t("owner.bulkImport.missingName"));
         const priceNum = parsePrice(updated.price);
-        if (priceNum === null) errors.push(`Invalid or missing price ("${updated.price}")`);
+        if (priceNum === null) errors.push(t("owner.bulkImport.invalidPrice", updated.price));
         return { ...updated, errors };
       })
     );
@@ -217,7 +225,7 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
 
     if (error) {
       console.error("Bulk import failed:", error);
-      setImportResult({ error: error.message || "Import failed. Please try again." });
+      setImportResult({ error: error.message || t("owner.bulkImport.importFailed") });
       setImporting(false);
       return;
     }
@@ -254,22 +262,22 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
         exit="exit"
         role="dialog"
         aria-modal="true"
-        aria-label="Bulk import products from CSV"
+        aria-label={t("owner.bulkImport.title")}
       >
         <div className="sheet-handle" aria-hidden="true" />
 
         {/* Header */}
         <div className="sheet-header">
           <div className="sheet-header__info">
-            <h2 className="sheet-header__name">Bulk Import Products</h2>
+            <h2 className="sheet-header__name">{t("owner.bulkImport.title")}</h2>
             <span className="sheet-header__type">
-              {step === "upload" && "Upload any CSV export — Square, Shopify, Excel, anything."}
-              {step === "mapping" && "Confirm which columns map to which fields."}
-              {step === "review" && "Fix or exclude any flagged rows before importing."}
-              {step === "done" && "Import complete."}
+              {step === "upload" && t("owner.bulkImport.subtitleUpload")}
+              {step === "mapping" && t("owner.bulkImport.subtitleMapping")}
+              {step === "review" && t("owner.bulkImport.subtitleReview")}
+              {step === "done" && t("owner.bulkImport.subtitleDone")}
             </span>
           </div>
-          <button className="sheet-close-btn" onClick={handleClose} aria-label="Close" type="button">
+          <button className="sheet-close-btn" onClick={handleClose} aria-label={t("owner.bulkImport.close")} type="button">
             <X size={20} strokeWidth={2} />
           </button>
         </div>
@@ -285,20 +293,20 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={handleDrop}
                 style={{
-                  border: "2px dashed var(--color-border, #ccc)",
+                  border: "2px dashed var(--color-border)",
                   borderRadius: 12,
                   padding: "48px 24px",
                   textAlign: "center",
                   cursor: "pointer",
-                  color: "var(--color-text-secondary, #666)",
+                  color: "var(--color-text-secondary)",
                 }}
               >
                 <UploadCloud size={36} style={{ opacity: 0.5, marginBottom: 12 }} />
                 <p style={{ fontWeight: 600, marginBottom: 4 }}>
-                  Click to choose a CSV file, or drag one here
+                  {t("owner.bulkImport.uploadPrompt")}
                 </p>
                 <p style={{ fontSize: 13 }}>
-                  Any column headers are fine — you'll match them up next.
+                  {t("owner.bulkImport.uploadHint")}
                 </p>
                 <input
                   ref={fileInputRef}
@@ -319,18 +327,18 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
           {/* Step 2: Column Mapping */}
           {step === "mapping" && (
             <div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, fontSize: 13, color: "var(--color-text-secondary, #666)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, fontSize: 13, color: "var(--color-text-secondary)" }}>
                 <FileSpreadsheet size={16} />
-                <span>{fileName} — {csvRows.length} row{csvRows.length !== 1 ? "s" : ""} found</span>
+                <span>{fileName} — {t("owner.bulkImport.rowsFound", csvRows.length)}</span>
               </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: "8px 12px", alignItems: "center" }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: "var(--color-text-muted, #999)", textTransform: "uppercase" }}>
-                  Your CSV column
+                <div style={{ fontSize: 12, fontWeight: 700, color: "var(--color-text-muted)", textTransform: "uppercase" }}>
+                  {t("owner.bulkImport.yourColumn")}
                 </div>
                 <div />
-                <div style={{ fontSize: 12, fontWeight: 700, color: "var(--color-text-muted, #999)", textTransform: "uppercase" }}>
-                  Maps to
+                <div style={{ fontSize: 12, fontWeight: 700, color: "var(--color-text-muted)", textTransform: "uppercase" }}>
+                  {t("owner.bulkImport.mapsTo")}
                 </div>
 
                 {csvHeaders.map((header) => {
@@ -341,7 +349,7 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
                       <div>
                         <div style={{ fontWeight: 600, fontSize: 14 }}>{header}</div>
                         {example && (
-                          <div style={{ fontSize: 12, color: "var(--color-text-muted, #999)" }}>
+                          <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
                             e.g. "{String(example).slice(0, 40)}"
                           </div>
                         )}
@@ -354,7 +362,7 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
                           setColumnMapping((prev) => ({ ...prev, [header]: e.target.value || null }))
                         }
                       >
-                        <option value="">— Ignore this column —</option>
+                        <option value="">{t("owner.bulkImport.ignoreColumn")}</option>
                         {TARGET_FIELDS.map((f) => (
                           <option key={f.key} value={f.key}>
                             {f.label}{f.required ? " *" : ""}
@@ -368,7 +376,7 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
 
               {!requiredFieldsMapped && (
                 <p className="pform__error" style={{ marginTop: 16 }}>
-                  ⚠️ Please map a column to both <strong>Product Name</strong> and <strong>Price</strong> — both are required.
+                  ⚠️ {t("owner.bulkImport.mappingRequired")}
                 </p>
               )}
             </div>
@@ -379,20 +387,20 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
             <div>
               <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16, fontSize: 13 }}>
                 <span style={{ fontWeight: 700 }}>
-                  {readyCount} of {reviewRows.length} rows ready to import
+                  {t("owner.bulkImport.rowsReady", readyCount, reviewRows.length)}
                 </span>
                 {flaggedCount > 0 && (
-                  <span style={{ color: "#E74C3C", fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}>
-                    <AlertTriangle size={14} /> {flaggedCount} need attention
+                  <span style={{ color: "var(--color-out)", fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}>
+                    <AlertTriangle size={14} /> {t("owner.bulkImport.needAttention", flaggedCount)}
                   </span>
                 )}
                 {flaggedCount > 0 && (
                   <button
                     type="button"
                     onClick={excludeAllFlagged}
-                    style={{ fontSize: 13, textDecoration: "underline", color: "var(--color-text-muted, #666)" }}
+                    style={{ fontSize: 13, textDecoration: "underline", color: "var(--color-text-muted)" }}
                   >
-                    Exclude all flagged rows
+                    {t("owner.bulkImport.excludeFlagged")}
                   </button>
                 )}
               </div>
@@ -400,16 +408,16 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                   <thead>
-                    <tr style={{ textAlign: "left", borderBottom: "1px solid var(--color-border, #ddd)" }}>
+                    <tr style={{ textAlign: "left", borderBottom: "1px solid var(--color-border)" }}>
                       <th style={{ padding: 6 }}></th>
-                      <th style={{ padding: 6 }}>Name</th>
-                      <th style={{ padding: 6 }}>Category</th>
-                      <th style={{ padding: 6 }}>SKU</th>
-                      <th style={{ padding: 6 }}>Price</th>
-                      <th style={{ padding: 6 }}>Quantity</th>
-                      <th style={{ padding: 6 }}>Unit</th>
-                      <th style={{ padding: 6 }}>Status</th>
-                      <th style={{ padding: 6 }}>Description</th>
+                      <th style={{ padding: 6 }}>{t("owner.bulkImport.colName")}</th>
+                      <th style={{ padding: 6 }}>{t("owner.bulkImport.colCategory")}</th>
+                      <th style={{ padding: 6 }}>{t("owner.bulkImport.colSku")}</th>
+                      <th style={{ padding: 6 }}>{t("owner.bulkImport.colPrice")}</th>
+                      <th style={{ padding: 6 }}>{t("owner.bulkImport.colQuantity")}</th>
+                      <th style={{ padding: 6 }}>{t("owner.bulkImport.colUnit")}</th>
+                      <th style={{ padding: 6 }}>{t("owner.bulkImport.colStatus")}</th>
+                      <th style={{ padding: 6 }}>{t("owner.bulkImport.colDescription")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -419,7 +427,7 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
                         style={{
                           borderBottom: "1px solid var(--color-border-light, #eee)",
                           opacity: row.excluded ? 0.4 : 1,
-                          background: row.errors.length > 0 && !row.excluded ? "rgba(231,76,60,0.06)" : "transparent",
+                          background: row.errors.length > 0 && !row.excluded ? "var(--color-out-bg)" : "transparent",
                         }}
                       >
                         <td style={{ padding: 6 }}>
@@ -427,7 +435,7 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
                             type="checkbox"
                             checked={!row.excluded}
                             onChange={(e) => updateRow(row.id, { excluded: !e.target.checked })}
-                            title={row.excluded ? "Excluded — click to include" : "Included — click to exclude"}
+                            title={row.excluded ? t("owner.bulkImport.excludedTitle") : t("owner.bulkImport.includedTitle")}
                           />
                         </td>
                         <td style={{ padding: 6, minWidth: 160 }}>
@@ -454,7 +462,7 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
                             style={{ padding: "4px 8px", fontSize: 13 }}
                             value={row.sku}
                             disabled={row.excluded}
-                            placeholder="optional"
+                            placeholder={t("owner.bulkImport.optional")}
                             onChange={(e) => updateRow(row.id, { sku: e.target.value })}
                           />
                         </td>
@@ -464,7 +472,7 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
                             style={{
                               padding: "4px 8px",
                               fontSize: 13,
-                              borderColor: row.errors.some((e) => e.includes("price")) ? "#E74C3C" : undefined,
+                              borderColor: row.errors.some((e) => e.toLowerCase().includes("price")) ? "var(--color-out)" : undefined,
                             }}
                             value={row.price}
                             disabled={row.excluded}
@@ -502,9 +510,9 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
                             disabled={row.excluded}
                             onChange={(e) => updateRow(row.id, { status: e.target.value })}
                           >
-                            <option value="available">Available</option>
-                            <option value="low">Low Stock</option>
-                            <option value="out">Out of Stock</option>
+                            <option value="available">{t("status.available")}</option>
+                            <option value="low">{t("status.low")}</option>
+                            <option value="out">{t("status.out")}</option>
                           </select>
                         </td>
                         <td style={{ padding: 6, minWidth: 160 }}>
@@ -513,7 +521,7 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
                             style={{ padding: "4px 8px", fontSize: 13 }}
                             value={row.description}
                             disabled={row.excluded}
-                            placeholder="optional"
+                            placeholder={t("owner.bulkImport.optional")}
                             onChange={(e) => updateRow(row.id, { description: e.target.value })}
                           />
                         </td>
@@ -524,17 +532,17 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
               </div>
 
               {/* Overwrite vs Skip toggle */}
-              <div style={{ marginTop: 20, padding: 16, background: "var(--color-surface-alt, #f7f7f7)", borderRadius: 10 }}>
+              <div style={{ marginTop: 20, padding: 16, background: "var(--color-surface-3)", borderRadius: 10 }}>
                 <p style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>
-                  If a product with the same name already exists in this store:
+                  {t("owner.bulkImport.conflictPrompt")}
                 </p>
                 <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, marginBottom: 6 }}>
                   <input type="radio" checked={!overwrite} onChange={() => setOverwrite(false)} />
-                  Skip it — keep the existing product as-is
+                  {t("owner.bulkImport.skipOption")}
                 </label>
                 <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
                   <input type="radio" checked={overwrite} onChange={() => setOverwrite(true)} />
-                  Overwrite it — replace with the imported data
+                  {t("owner.bulkImport.overwriteOption")}
                 </label>
               </div>
 
@@ -549,13 +557,13 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
           {/* Step 4: Done */}
           {step === "done" && importResult && !importResult.error && (
             <div style={{ textAlign: "center", padding: "32px 0" }}>
-              <CheckCircle2 size={48} style={{ color: "#2ECC71", marginBottom: 16 }} />
+              <CheckCircle2 size={48} style={{ color: "var(--color-available)", marginBottom: 16 }} />
               <p style={{ fontWeight: 700, fontSize: 16, marginBottom: 4 }}>
-                Imported {importResult.insertedCount} product{importResult.insertedCount !== 1 ? "s" : ""}
+                {t("owner.bulkImport.imported", importResult.insertedCount)}
               </p>
               {importResult.skippedCount > 0 && (
-                <p style={{ color: "var(--color-text-secondary, #666)", fontSize: 14 }}>
-                  Skipped {importResult.skippedCount} that already existed
+                <p style={{ color: "var(--color-text-secondary)", fontSize: 14 }}>
+                  {t("owner.bulkImport.skipped", importResult.skippedCount)}
                 </p>
               )}
             </div>
@@ -567,17 +575,17 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
           {step === "mapping" && (
             <>
               <button type="button" className="regform__nav-back" onClick={() => setStep("upload")}>
-                <ArrowLeft size={16} /> Back
+                <ArrowLeft size={16} /> {t("owner.bulkImport.back")}
               </button>
               <button type="button" className="regform__nav-next" onClick={proceedToReview} disabled={!requiredFieldsMapped}>
-                Continue <ArrowRight size={16} />
+                {t("owner.bulkImport.continueBtn")} <ArrowRight size={16} />
               </button>
             </>
           )}
           {step === "review" && (
             <>
               <button type="button" className="regform__nav-back" onClick={() => setStep("mapping")}>
-                <ArrowLeft size={16} /> Back
+                <ArrowLeft size={16} /> {t("owner.bulkImport.back")}
               </button>
               <button
                 type="button"
@@ -588,17 +596,17 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
                 {importing ? (
                   <>
                     <span className="map-loading-spinner" style={{ width: 18, height: 18, borderWidth: 2, borderTopColor: "#fff" }} />
-                    Importing…
+                    {t("owner.bulkImport.importing")}
                   </>
                 ) : (
-                  <>Import {readyCount} Product{readyCount !== 1 ? "s" : ""}</>
+                  <>{t("owner.bulkImport.importN", readyCount)}</>
                 )}
               </button>
             </>
           )}
           {step === "done" && (
             <button type="button" className="regform__nav-submit" onClick={handleClose} style={{ marginLeft: "auto" }}>
-              Done
+              {t("owner.bulkImport.done")}
             </button>
           )}
         </div>

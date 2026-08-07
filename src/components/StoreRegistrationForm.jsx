@@ -9,6 +9,9 @@
 // Coordinates are sent as a single PostGIS `location` field using EWKT text
 // ("SRID=4326;POINT(lng lat)") — Postgres casts this to geography(Point,4326)
 // automatically; `latitude`/`longitude` are generated columns derived from it.
+//
+// NOTE ON STORE_TYPES: dropdown values stay in English regardless of UI
+// language — stored as-is in the DB and shown on the public map.
 
 import React, { useState, useCallback, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -33,6 +36,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { supabase } from "../config/supabaseClient";
+import { useLanguage } from "../i18n/LanguageContext";
 
 // ─── Fix Leaflet default icon path (Vite bundler issue) ──────────────────────
 delete L.Icon.Default.prototype._getIconUrl;
@@ -45,12 +49,15 @@ L.Icon.Default.mergeOptions({
     "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
 });
 
-// Custom red pin icon so it visually stands out from the public map's pins
+// Terracotta pin — literal hex, not var(--color-brand-primary): this is
+// baked into a raw SVG string for L.divIcon(), and SVG fill="..."
+// attributes don't support var() CSS syntax (only style="..." does).
+// Same value/limitation as StoreEditModal.jsx's identical pin icon.
 const STORE_PIN_ICON = L.divIcon({
   html: `
     <div style="position:relative;width:36px;height:36px;">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="36" height="36">
-        <path fill="#E74C3C" stroke="#fff" stroke-width="1.2"
+        <path fill="#C85A27" stroke="#fff" stroke-width="1.2"
           d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/>
         <circle cx="12" cy="9" r="2.8" fill="white"/>
       </svg>
@@ -76,13 +83,6 @@ const STORE_TYPES = [
   "Vegetable Stall",
   "Hardware Store",
   "Other",
-];
-
-// ─── Stepper config ───────────────────────────────────────────────────────────
-const STEPS = [
-  { id: 1, label: "Store Details",   icon: Store   },
-  { id: 2, label: "GIS Location",    icon: MapPin  },
-  { id: 3, label: "Review & Submit", icon: CheckCircle2 },
 ];
 
 // ─── Animation variants ───────────────────────────────────────────────────────
@@ -120,20 +120,17 @@ function FlyController({ target }) {
  * Defensive fix for a real bug seen in production: something in this
  * project's global CSS (likely an `!important` rule from a reset or
  * leftover pre-migration stylesheet) was overriding the map container's
- * inline `height: 280px`, collapsing it to 0px tall — confirmed via
- * DevTools showing "515 × 0" despite the correct inline style being
- * present in the DOM. A plain inline style can't beat an external
- * `!important` rule, so instead we grab the real Leaflet container DOM
- * node and set the height directly with `!important` priority (which
- * DOES beat any external `!important`), then call invalidateSize() so
- * Leaflet redraws its tiles for the corrected box.
+ * inline `height: 280px`, collapsing it to 0px tall. A plain inline
+ * style can't beat an external `!important` rule, so instead we grab the
+ * real Leaflet container DOM node and set the height directly with
+ * `!important` priority, then call invalidateSize() so Leaflet redraws
+ * its tiles for the corrected box.
  */
 function ForceMapHeight({ height }) {
   const map = useMap();
   useEffect(() => {
     const container = map.getContainer();
     container.style.setProperty("height", height, "important");
-    // Let the height change actually apply before Leaflet re-measures
     const raf = requestAnimationFrame(() => map.invalidateSize());
     return () => cancelAnimationFrame(raf);
   }, [map, height]);
@@ -145,22 +142,22 @@ function ForceMapHeight({ height }) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Step 1 — Basic store details */
-function StepStoreDetails({ data, onChange, errors }) {
+function StepStoreDetails({ data, onChange, errors, t }) {
   return (
     <div className="regform__step">
       <p className="regform__step-desc">
-        Tell us about your store. This information will appear on the community map.
+        {t("owner.registration.stepDetailsDesc")}
       </p>
 
       <div className="regform__field">
         <label className="regform__label" htmlFor="reg-name">
-          Store Name <span className="pform__required">*</span>
+          {t("owner.registration.storeNameLabel")} <span className="pform__required">*</span>
         </label>
         <input
           id="reg-name"
           className={`pform__input ${errors.name ? "pform__input--error" : ""}`}
           type="text"
-          placeholder="e.g. Reyes General Merchandise"
+          placeholder={t("owner.registration.storeNamePlaceholder")}
           value={data.name}
           onChange={(e) => onChange("name", e.target.value)}
           maxLength={80}
@@ -171,7 +168,7 @@ function StepStoreDetails({ data, onChange, errors }) {
 
       <div className="regform__field">
         <label className="regform__label" htmlFor="reg-type">
-          Store Type <span className="pform__required">*</span>
+          {t("owner.registration.storeTypeLabel")} <span className="pform__required">*</span>
         </label>
         <select
           id="reg-type"
@@ -179,21 +176,21 @@ function StepStoreDetails({ data, onChange, errors }) {
           value={data.type}
           onChange={(e) => onChange("type", e.target.value)}
         >
-          <option value="">— Select a type —</option>
-          {STORE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+          <option value="">{t("owner.storeEdit.selectType")}</option>
+          {STORE_TYPES.map((ty) => <option key={ty} value={ty}>{ty}</option>)}
         </select>
         {errors.type && <span className="regform__field-error">{errors.type}</span>}
       </div>
 
       <div className="regform__field">
         <label className="regform__label" htmlFor="reg-owner">
-          Owner / Manager Name <span className="pform__required">*</span>
+          {t("owner.registration.ownerLabel")} <span className="pform__required">*</span>
         </label>
         <input
           id="reg-owner"
           className={`pform__input ${errors.ownerName ? "pform__input--error" : ""}`}
           type="text"
-          placeholder="e.g. Maria Reyes"
+          placeholder={t("owner.registration.ownerPlaceholder")}
           value={data.ownerName}
           onChange={(e) => onChange("ownerName", e.target.value)}
           maxLength={60}
@@ -203,13 +200,13 @@ function StepStoreDetails({ data, onChange, errors }) {
 
       <div className="regform__field">
         <label className="regform__label" htmlFor="reg-contact">
-          Contact Number <span className="pform__required">*</span>
+          {t("owner.registration.contactLabel")} <span className="pform__required">*</span>
         </label>
         <input
           id="reg-contact"
           className={`pform__input ${errors.contactNumber ? "pform__input--error" : ""}`}
           type="tel"
-          placeholder="e.g. 0917-123-4567"
+          placeholder={t("owner.registration.contactPlaceholder")}
           value={data.contactNumber}
           onChange={(e) => onChange("contactNumber", e.target.value)}
           maxLength={20}
@@ -221,7 +218,7 @@ function StepStoreDetails({ data, onChange, errors }) {
 }
 
 /** Step 2 — GIS location with Nominatim geocoding + draggable pin */
-function StepGISLocation({ data, onChange, errors }) {
+function StepGISLocation({ data, onChange, errors, t }) {
   const [searchQuery, setSearchQuery] = useState(data.address || "");
   const [geocoding, setGeocoding] = useState(false);
   const [geocodeError, setGeocodeError] = useState("");
@@ -243,7 +240,7 @@ function StepGISLocation({ data, onChange, errors }) {
       const results = await res.json();
 
       if (results.length === 0) {
-        setGeocodeError("Address not found. Try a shorter query or pin manually.");
+        setGeocodeError(t("owner.registration.addressNotFound"));
         return;
       }
 
@@ -256,11 +253,11 @@ function StepGISLocation({ data, onChange, errors }) {
       onChange("address", searchQuery.trim());
       setFlyTarget([newLat, newLng]);
     } catch {
-      setGeocodeError("Geocoding failed. Check your connection or pin manually.");
+      setGeocodeError(t("owner.registration.geocodeFailed"));
     } finally {
       setGeocoding(false);
     }
-  }, [searchQuery, onChange]);
+  }, [searchQuery, onChange, t]);
 
   const handleMapClick = useCallback((lat, lng) => {
     onChange("lat", lat);
@@ -276,13 +273,13 @@ function StepGISLocation({ data, onChange, errors }) {
   return (
     <div className="regform__step">
       <p className="regform__step-desc">
-        Search for your store's address <strong>or</strong> tap the map / drag the pin to set its exact location.
+        {t("owner.registration.stepLocationDesc")}
       </p>
 
       {/* Address search + geocode */}
       <div className="regform__field">
         <label className="regform__label" htmlFor="reg-address">
-          Street Address
+          {t("owner.registration.addressLabel")}
         </label>
         <div className="regform__geocode-row">
           <input
@@ -290,7 +287,7 @@ function StepGISLocation({ data, onChange, errors }) {
             className="pform__input"
             style={{ flex: 1 }}
             type="text"
-            placeholder="e.g. Blk 4 Lot 12, Catalunan Grande"
+            placeholder={t("owner.registration.addressPlaceholder")}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleGeocode()}
@@ -300,7 +297,7 @@ function StepGISLocation({ data, onChange, errors }) {
             className="regform__geocode-btn"
             onClick={handleGeocode}
             disabled={geocoding || !searchQuery.trim()}
-            aria-label="Search address"
+            aria-label={t("search.label")}
           >
             {geocoding
               ? <Loader2 size={18} className="regform__spin" />
@@ -324,7 +321,7 @@ function StepGISLocation({ data, onChange, errors }) {
         <div className="regform__map-hint">
           {hasCoords
             ? `📍 ${data.lat.toFixed(6)}, ${data.lng.toFixed(6)}`
-            : "Tap on the map or search above to place a pin"}
+            : t("owner.registration.tapToPlace")}
         </div>
 
         <MapContainer
@@ -362,7 +359,7 @@ function StepGISLocation({ data, onChange, errors }) {
       {hasCoords && (
         <div className="regform__coord-row">
           <div className="regform__coord-field">
-            <label className="regform__label">Latitude</label>
+            <label className="regform__label">{t("owner.registration.latitude")}</label>
             <input
               className="pform__input"
               type="number"
@@ -372,7 +369,7 @@ function StepGISLocation({ data, onChange, errors }) {
             />
           </div>
           <div className="regform__coord-field">
-            <label className="regform__label">Longitude</label>
+            <label className="regform__label">{t("owner.registration.longitude")}</label>
             <input
               className="pform__input"
               type="number"
@@ -388,22 +385,22 @@ function StepGISLocation({ data, onChange, errors }) {
 }
 
 /** Step 3 — Review summary before final submit */
-function StepReview({ data }) {
+function StepReview({ data, t }) {
   const hasCoords = data.lat !== null && data.lng !== null;
 
   const rows = [
-    { label: "Store Name",    value: data.name },
-    { label: "Store Type",    value: data.type },
-    { label: "Owner / Manager", value: data.ownerName },
-    { label: "Contact",       value: data.contactNumber },
-    { label: "Address",       value: data.address || "Not provided" },
-    { label: "Coordinates",   value: hasCoords ? `${data.lat.toFixed(6)}, ${data.lng.toFixed(6)}` : "Not set" },
+    { label: t("owner.registration.reviewStoreName"), value: data.name },
+    { label: t("owner.registration.reviewStoreType"), value: data.type },
+    { label: t("owner.registration.reviewOwner"), value: data.ownerName },
+    { label: t("owner.registration.reviewContact"), value: data.contactNumber },
+    { label: t("owner.registration.reviewAddress"), value: data.address || t("owner.registration.reviewNotProvided") },
+    { label: t("owner.registration.reviewCoordinates"), value: hasCoords ? `${data.lat.toFixed(6)}, ${data.lng.toFixed(6)}` : t("owner.registration.reviewNotSet") },
   ];
 
   return (
     <div className="regform__step">
       <p className="regform__step-desc">
-        Review your store information before submitting. You can go back to make changes.
+        {t("owner.registration.stepReviewDesc")}
       </p>
 
       <div className="regform__review-table">
@@ -418,7 +415,7 @@ function StepReview({ data }) {
       {/* Mini map preview of pin location */}
       {hasCoords && (
         <div className="regform__map-wrapper" style={{ marginTop: 16 }}>
-          <div className="regform__map-hint">📍 Your store pin location</div>
+          <div className="regform__map-hint">📍 {t("owner.registration.pinPreview")}</div>
           <MapContainer
             center={[data.lat, data.lng]}
             zoom={17}
@@ -472,6 +469,15 @@ const INITIAL_DATA = {
  * }} props
  */
 export default function StoreRegistrationForm({ user, onComplete, onCancel }) {
+  const { t } = useLanguage();
+
+  // Defined inside the component so labels react to language changes
+  const STEPS = [
+    { id: 1, label: t("owner.registration.stepDetails"),   icon: Store   },
+    { id: 2, label: t("owner.registration.stepLocation"),  icon: MapPin  },
+    { id: 3, label: t("owner.registration.stepReview"), icon: CheckCircle2 },
+  ];
+
   const [step, setStep]       = useState(1);
   const [dir, setDir]         = useState(1);    // animation direction
   const [data, setData]       = useState(INITIAL_DATA);
@@ -488,14 +494,14 @@ export default function StoreRegistrationForm({ user, onComplete, onCancel }) {
   const validate = (targetStep) => {
     const errs = {};
     if (targetStep >= 1) {
-      if (!data.name.trim())          errs.name         = "Store name is required.";
-      if (!data.type)                 errs.type         = "Please select a store type.";
-      if (!data.ownerName.trim())     errs.ownerName    = "Owner name is required.";
-      if (!data.contactNumber.trim()) errs.contactNumber = "Contact number is required.";
+      if (!data.name.trim())          errs.name         = t("owner.registration.nameRequired");
+      if (!data.type)                 errs.type         = t("owner.registration.typeRequired");
+      if (!data.ownerName.trim())     errs.ownerName    = t("owner.registration.ownerRequired");
+      if (!data.contactNumber.trim()) errs.contactNumber = t("owner.registration.contactRequired");
     }
     if (targetStep >= 2) {
       if (data.lat === null || data.lng === null)
-        errs.coords = "Please pin your store location on the map.";
+        errs.coords = t("owner.registration.coordsRequired");
     }
     return errs;
   };
@@ -550,7 +556,7 @@ export default function StoreRegistrationForm({ user, onComplete, onCancel }) {
 
     if (insertError) {
       console.error("Store registration failed:", insertError);
-      setSubmitError("Registration failed. Please check your connection and try again.");
+      setSubmitError(t("owner.registration.submitFailed"));
       setSubmitting(false);
       isSubmittingRef.current = false;
       return;
@@ -576,14 +582,14 @@ export default function StoreRegistrationForm({ user, onComplete, onCancel }) {
       <div className="regform__header" style={{ position: "relative" }}>
         <Store size={28} />
         <div>
-          <h1 className="regform__title">Register Your Store</h1>
-          <p className="regform__subtitle">Signed in as {user.email}</p>
+          <h1 className="regform__title">{t("owner.registration.title")}</h1>
+          <p className="regform__subtitle">{t("owner.registration.signedInAs", user.email)}</p>
         </div>
         {onCancel && (
           <button
             type="button"
             onClick={onCancel}
-            aria-label="Cancel adding this store"
+            aria-label={t("owner.registration.cancel")}
             style={{
               position: "absolute",
               top: 0,
@@ -597,7 +603,7 @@ export default function StoreRegistrationForm({ user, onComplete, onCancel }) {
               padding: 8,
             }}
           >
-            ✕ Cancel
+            ✕ {t("owner.registration.cancel")}
           </button>
         )}
       </div>
@@ -631,13 +637,13 @@ export default function StoreRegistrationForm({ user, onComplete, onCancel }) {
             exit="exit"
           >
             {step === 1 && (
-              <StepStoreDetails data={data} onChange={onChange} errors={errors} />
+              <StepStoreDetails data={data} onChange={onChange} errors={errors} t={t} />
             )}
             {step === 2 && (
-              <StepGISLocation data={data} onChange={onChange} errors={errors} />
+              <StepGISLocation data={data} onChange={onChange} errors={errors} t={t} />
             )}
             {step === 3 && (
-              <StepReview data={data} />
+              <StepReview data={data} t={t} />
             )}
           </motion.div>
         </AnimatePresence>
@@ -654,13 +660,13 @@ export default function StoreRegistrationForm({ user, onComplete, onCancel }) {
       <div className="regform__nav">
         {step > 1 && (
           <button type="button" className="regform__nav-back" onClick={goBack} disabled={submitting}>
-            <ChevronLeft size={18} /> Back
+            <ChevronLeft size={18} /> {t("owner.registration.back")}
           </button>
         )}
 
         {step < 3 && (
           <button type="button" className="regform__nav-next" onClick={goNext}>
-            Next <ChevronRight size={18} />
+            {t("owner.registration.next")} <ChevronRight size={18} />
           </button>
         )}
 
@@ -669,11 +675,11 @@ export default function StoreRegistrationForm({ user, onComplete, onCancel }) {
             {submitting ? (
               <>
                 <span className="map-loading-spinner" style={{ width: 18, height: 18, borderWidth: 2, borderTopColor: "#fff" }} />
-                Registering…
+                {t("owner.registration.registering")}
               </>
             ) : (
               <>
-                <CheckCircle2 size={18} /> Register Store
+                <CheckCircle2 size={18} /> {t("owner.registration.registerStore")}
               </>
             )}
           </button>

@@ -14,7 +14,7 @@
 //      instead of running its own separate getSession() round trip.
 
 import React, { useState, useEffect, useCallback } from "react";
-import { Store } from "lucide-react";
+import { Store, Languages } from "lucide-react";
 
 import MapContainer from "./components/MapContainer";
 import SearchBar from "./components/SearchBar";
@@ -22,6 +22,7 @@ import StoreDetails from "./components/StoreDetails";
 import OwnerDashboard from "./pages/OwnerDashboard";
 import { useMapMarkers, useStoreDetails, useDebouncedSearchMatches } from "./hooks/useStores";
 import { supabase } from "./config/supabaseClient";
+import { LanguageProvider, useLanguage } from "./i18n/LanguageContext";
 
 import "./styles/App.css";
 
@@ -69,8 +70,9 @@ function useHashRoute() {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function App() {
+function AppShell() {
   const [route, setRoute] = useHashRoute();
+  const { language, setLanguage, t } = useLanguage();
 
   // ─── Global Supabase auth session ────────────────────────────────────────
   const [session, setSession] = useState(null);
@@ -342,6 +344,52 @@ export default function App() {
       >
         <Store size={22} />
       </a>
+
+      {/* Language toggle — EN/TL. Placed top-left, clear of the search
+          bar (which spans the top, centered) and the locate-me/dashboard
+          controls stacked bottom-right. */}
+      <button
+        type="button"
+        onClick={() => setLanguage(language === "en" ? "tl" : "en")}
+        aria-label={t("common.language")}
+        title={t("common.language")}
+        style={{
+          position: "fixed",
+          top: "calc(16px + env(safe-area-inset-top, 0px))",
+          left: 16,
+          zIndex: 800,
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          height: 40,
+          padding: "0 14px",
+          borderRadius: "var(--radius-pill, 999px)",
+          background: "#fff",
+          color: "var(--color-text-primary, #1a1a1a)",
+          border: "none",
+          boxShadow: "var(--shadow-md, 0 2px 10px rgba(0,0,0,0.15))",
+          fontSize: 13,
+          fontWeight: 700,
+          cursor: "pointer",
+        }}
+      >
+        <Languages size={16} strokeWidth={2.2} />
+        {language === "en" ? "TL" : "EN"}
+      </button>
     </div>
+  );
+}
+
+/**
+ * App
+ * Wraps the actual app shell in LanguageProvider, so every descendant
+ * (including MapContainer, SearchBar, StoreDetails) can call
+ * useLanguage() to read/set the current language and translate strings.
+ */
+export default function App() {
+  return (
+    <LanguageProvider>
+      <AppShell />
+    </LanguageProvider>
   );
 }

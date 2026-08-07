@@ -8,6 +8,7 @@ import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Trash2, X, AlertTriangle } from "lucide-react";
 import { supabase } from "../config/supabaseClient";
+import { useLanguage } from "../i18n/LanguageContext";
 
 // ─── Animation variants ───────────────────────────────────────────────────────
 const overlayVariants = {
@@ -56,6 +57,7 @@ export default function ConfirmDeleteModal({
   storeId,
   product,
 }) {
+  const { t } = useLanguage();
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
 
@@ -72,7 +74,7 @@ export default function ConfirmDeleteModal({
 
     if (deleteError) {
       console.error("Delete failed:", deleteError);
-      setError("Could not delete. Please check your connection and try again.");
+      setError(t("owner.confirmDelete.error"));
       setDeleting(false);
       return;
     }
@@ -116,16 +118,16 @@ export default function ConfirmDeleteModal({
 
             {/* Text */}
             <h3 id="confirm-delete-title" className="confirm-dialog__title">
-              Delete Product?
+              {t("owner.confirmDelete.title")}
             </h3>
             <p id="confirm-delete-desc" className="confirm-dialog__desc">
-              You are about to permanently remove
+              {t("owner.confirmDelete.desc1")}
             </p>
             <p className="confirm-dialog__product-name">
               "{product.name}"
             </p>
             <p className="confirm-dialog__desc" style={{ marginTop: 4 }}>
-              from your inventory. This cannot be undone.
+              {t("owner.confirmDelete.desc2")}
             </p>
 
             {error && (
@@ -141,7 +143,7 @@ export default function ConfirmDeleteModal({
                 disabled={deleting}
               >
                 <X size={16} />
-                Cancel
+                {t("owner.confirmDelete.cancel")}
               </button>
               <button
                 type="button"
@@ -160,12 +162,12 @@ export default function ConfirmDeleteModal({
                         borderTopColor: "#fff",
                       }}
                     />
-                    Deleting…
+                    {t("owner.confirmDelete.deleting")}
                   </>
                 ) : (
                   <>
                     <Trash2 size={16} />
-                    Yes, Delete
+                    {t("owner.confirmDelete.confirm")}
                   </>
                 )}
               </button>

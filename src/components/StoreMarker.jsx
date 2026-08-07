@@ -9,23 +9,28 @@
 import React, { useMemo } from "react";
 import { Marker, Tooltip } from "react-leaflet";
 import L from "leaflet";
+import { useLanguage } from "../i18n/LanguageContext";
 
 // ─── Traffic-light constants ──────────────────────────────────────────────────
+// Colors reference CSS custom properties rather than literal hex, so a
+// palette change (like the Shelvd rebrand) only needs to touch :root in
+// App.css — not every component that draws a status-colored pin.
+// Ring colors stay as literal rgba() since Leaflet's DivIcon renders raw
+// HTML/SVG outside the normal component tree; a plain rgba() with the
+// matching alpha is simpler and more reliable here than trying to derive
+// a translucent version of a CSS variable at runtime.
 const STATUS_CONFIG = {
   available: {
-    color: "#2ECC71",
-    label: "Available",
-    ringColor: "rgba(46, 204, 113, 0.3)",
+    color: "var(--color-available)",
+    ringColor: "rgba(22, 163, 74, 0.3)",
   },
   low: {
-    color: "#F1C40F",
-    label: "Low Stock",
-    ringColor: "rgba(241, 196, 15, 0.3)",
+    color: "var(--color-low)",
+    ringColor: "rgba(217, 119, 6, 0.3)",
   },
   out: {
-    color: "#E74C3C",
-    label: "Out of Stock",
-    ringColor: "rgba(231, 76, 60, 0.3)",
+    color: "var(--color-out)",
+    ringColor: "rgba(220, 38, 38, 0.3)",
   },
 };
 
@@ -33,10 +38,10 @@ const DIMMED_COLOR = "#9B9B9B";
 const DIMMED_RING = "rgba(155, 155, 155, 0.2)";
 
 // Default pin appearance when no search is active — just "here's a
-// store", not a status judgment. Matches the app's brand color so it
-// reads as neutral/informational rather than a 4th traffic-light state.
-const NEUTRAL_COLOR = "#2C3E50";
-const NEUTRAL_RING = "rgba(44, 62, 80, 0.25)";
+// store", not a status judgment. References the brand accent so it
+// stays in sync with whatever the current palette's accent color is.
+const NEUTRAL_COLOR = "var(--color-brand-primary)";
+const NEUTRAL_RING = "rgba(200, 90, 39, 0.25)";
 // ──────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -75,7 +80,7 @@ function buildDivIcon(color, ringColor, isSelected, isDimmed) {
         viewBox="0 0 24 24"
         style="position:absolute; top:${(ringSize - size) / 2}px; left:${(ringSize - size) / 2}px;"
       >
-        <circle cx="12" cy="12" r="10" fill="${color}" />
+        <circle cx="12" cy="12" r="10" style="fill:${color}" />
         <circle cx="12" cy="12" r="6"  fill="white" fill-opacity="0.35" />
         <circle cx="12" cy="12" r="3"  fill="white" />
       </svg>
@@ -116,6 +121,7 @@ export default function StoreMarker({
   matchCount,
   onClick,
 }) {
+  const { t } = useLanguage();
   const isDimmed = searchActive && !isHighlighted;
 
   const { color, label, ringColor, showStatusLabel } = useMemo(() => {
@@ -133,15 +139,15 @@ export default function StoreMarker({
     if (isDimmed) {
       return {
         color: DIMMED_COLOR,
-        label: "No match",
+        label: t("map.noMatch"),
         ringColor: DIMMED_RING,
         showStatusLabel: true,
       };
     }
     // Search active and this store matched — show the real status.
     const cfg = STATUS_CONFIG[displayStatus] ?? STATUS_CONFIG.available;
-    return { ...cfg, showStatusLabel: true };
-  }, [displayStatus, isDimmed, searchActive]);
+    return { ...cfg, label: t(`status.${displayStatus ?? "available"}`), showStatusLabel: true };
+  }, [displayStatus, isDimmed, searchActive, t]);
 
   const icon = useMemo(
     () => buildDivIcon(color, ringColor, isSelected, isDimmed),
@@ -173,7 +179,7 @@ export default function StoreMarker({
           )}
           {searchActive && isHighlighted && (
             <span className="marker-tooltip__count">
-              {matchCount} matching product{matchCount !== 1 ? "s" : ""}
+              {t("map.matchCount", matchCount)}
             </span>
           )}
         </div>

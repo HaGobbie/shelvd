@@ -17,16 +17,20 @@
 //     useDebouncedSearchMatches() hook in App.jsx, which calls the
 //     search_inventory() Postgres RPC.
 
-import React, { useMemo } from "react";
+import React, { useMemo, useEffect } from "react";
 import {
   MapContainer as LeafletMap,
   TileLayer,
+  Marker,
   useMap,
 } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+import { LocateFixed, Loader2 } from "lucide-react";
 
 import StoreMarker from "./StoreMarker";
+import { useGeolocation } from "../hooks/useGeolocation";
+import { useLanguage } from "../i18n/LanguageContext";
 
 // ─── Fix Leaflet's default icon path issue with Vite bundlers ─────────────────
 delete L.Icon.Default.prototype._getIconUrl;
@@ -61,6 +65,69 @@ function MapController({ flyTo }) {
 }
 
 /**
+ * Blue pulsing "you are here" dot — visually distinct from store pins
+ * (which use the brand-neutral/status colors) so it reads unambiguously
+ * as "this is you," not another store.
+ */
+function UserLocationMarker({ position, label }) {
+  const icon = useMemo(
+    () =>
+      L.divIcon({
+        html: `
+          <div style="position:relative; width:20px; height:20px;">
+            <div style="
+              position:absolute; inset:-9px;
+              border-radius:50%;
+              background:rgba(59,130,246,0.25);
+              animation: pinPulse 1.8s ease-out infinite;
+            "></div>
+            <div style="
+              position:absolute; inset:0;
+              border-radius:50%;
+              background:#3B82F6;
+              border:3px solid white;
+              box-shadow:0 1px 4px rgba(0,0,0,0.4);
+            "></div>
+          </div>
+        `,
+        className: "",
+        iconSize: [20, 20],
+        iconAnchor: [10, 10],
+      }),
+    []
+  );
+
+  if (!position) return null;
+
+  return (
+    <Marker
+      position={position}
+      icon={icon}
+      interactive={false}
+      zIndexOffset={2000}
+      alt={label}
+    />
+  );
+}
+
+/**
+ * Flies the map to `position` whenever it changes — fires on initial
+ * geolocation success AND every subsequent explicit "locate me" tap
+ * (position only ever changes via those two paths, both of which the
+ * person clearly wants centered on-screen, so re-flying every time is
+ * the right call here, not a nuisance).
+ */
+function FlyToPosition({ position }) {
+  const map = useMap();
+  useEffect(() => {
+    if (position) {
+      map.flyTo(position, 16, { animate: true, duration: 1 });
+    }
+  }, [position, map]);
+  return null;
+}
+
+/**
  * @typedef {Object} MapContainerProps
  * @property {Array}    markers        — from useMapMarkers(): {id, name, coords, worstStatus}
  * @property {boolean}  loading
@@ -88,6 +155,8 @@ export default function MapContainer({
   selectedStoreId = null,
 }) {
   const searchActive = searchQuery.trim().length > 0;
+  const { t } = useLanguage();
+  const { position: userPosition, status: geoStatus, requestLocation } = useGeolocation();
 
   // Derive display data per marker from the current search matches.
   // IMPORTANT: pins are neutral (no status color) when no search is
@@ -174,6 +243,8 @@ export default function MapContainer({
         />
 
         <MapController flyTo={null} />
+        <FlyToPosition position={userPosition} />
+        <UserLocationMarker position={userPosition} label={t("map.youAreHere")} />
 
         {markerDisplayData.map(({ marker, displayStatus, hasMatch, matchCount }) => (
           <StoreMarker
@@ -188,6 +259,44 @@ export default function MapContainer({
           />
         ))}
       </LeafletMap>
+
+      {/* "Locate me" crosshair control — re-triggers the geolocation
+          prompt for anyone who denied it initially (or wants to
+          re-center on a moved position). Positioned to sit just above
+          the Owner Dashboard FAB in App.jsx (bottom:24px, 52px tall),
+          not inside it — the two are separate components with no shared
+          layout parent, so this offset is manually kept clear of it. */}
+      <button
+        type="button"
+        onClick={requestLocation}
+        aria-label={
+          geoStatus === "loading" ? t("map.locating") : t("map.locateMe")
+        }
+        title={geoStatus === "denied" ? t("map.locationDenied") : t("map.locateMe")}
+        style={{
+          position: "fixed",
+          bottom: "calc(92px + env(safe-area-inset-bottom, 0px))",
+          right: 20,
+          zIndex: 800,
+          width: 48,
+          height: 48,
+          borderRadius: "50%",
+          background: "#fff",
+          color: geoStatus === "denied" ? "#E74C3C" : "var(--color-brand-primary)",
+          border: "none",
+          boxShadow: "var(--shadow-lg, 0 4px 16px rgba(0,0,0,0.2))",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "pointer",
+        }}
+      >
+        {geoStatus === "loading" ? (
+          <Loader2 size={22} className="regform__spin" />
+        ) : (
+          <LocateFixed size={22} strokeWidth={2.2} />
+        )}
+      </button>
 
       {/* Search results summary badge */}
       {searchActive && !loading && (

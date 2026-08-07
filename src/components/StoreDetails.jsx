@@ -6,27 +6,30 @@
 
 import React, { useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, MapPin, Phone, Clock, Package } from "lucide-react";
+import { X, MapPin, Phone, Clock, Package, Navigation } from "lucide-react";
 import { formatLastUpdated, formatPrice } from "../hooks/useStores";
+import { useLanguage } from "../i18n/LanguageContext";
 
 // ─── Status badge config ──────────────────────────────────────────────────────
+// Colors reference CSS custom properties (defined in :root, App.css)
+// rather than literal hex — so a future palette change only needs to
+// touch one place, not every component that renders a status badge.
+// Labels are no longer hardcoded here — they come from the current
+// language's dictionary (see src/i18n/translations.js `status.*` keys).
 const STATUS_CONFIG = {
   available: {
-    label: "Available",
-    color: "#2ECC71",
-    bg: "rgba(46, 204, 113, 0.12)",
+    color: "var(--color-available)",
+    bg: "var(--color-available-bg)",
     emoji: "✅",
   },
   low: {
-    label: "Low Stock",
-    color: "#F1C40F",
-    bg: "rgba(241, 196, 15, 0.12)",
+    color: "var(--color-low)",
+    bg: "var(--color-low-bg)",
     emoji: "⚠️",
   },
   out: {
-    label: "Out of Stock",
-    color: "#E74C3C",
-    bg: "rgba(231, 76, 60, 0.12)",
+    color: "var(--color-out)",
+    bg: "var(--color-out-bg)",
     emoji: "❌",
   },
 };
@@ -58,13 +61,15 @@ const sheetVariants = {
  * StatusBadge — inline pill showing availability
  */
 function StatusBadge({ status }) {
+  const { t } = useLanguage();
   const cfg = STATUS_CONFIG[status] ?? STATUS_CONFIG.available;
+  const label = t(`status.${status ?? "available"}`);
   return (
     <span
       className="status-badge"
       style={{ color: cfg.color, background: cfg.bg, borderColor: cfg.color }}
     >
-      {cfg.emoji}&nbsp;{cfg.label}
+      {cfg.emoji}&nbsp;{label}
     </span>
   );
 }
@@ -115,6 +120,7 @@ function ProductRow({ product, searchQuery }) {
  * @param {StoreDetailsProps} props
  */
 export default function StoreDetails({ store, searchQuery = "", onClose }) {
+  const { t } = useLanguage();
   const isOpen = Boolean(store);
 
   const handleOverlayClick = useCallback(
@@ -186,7 +192,7 @@ export default function StoreDetails({ store, searchQuery = "", onClose }) {
               <button
                 className="sheet-close-btn"
                 onClick={onClose}
-                aria-label="Close store details"
+                aria-label={t("storeDetails.close")}
                 type="button"
               >
                 <X size={20} strokeWidth={2} />
@@ -203,6 +209,29 @@ export default function StoreDetails({ store, searchQuery = "", onClose }) {
                 <Phone size={14} />
                 <span>{store?.contactNumber}</span>
               </div>
+              {/* Google Maps deep link — deliberately NOT a straight-line
+                  distance/in-app routing calculation. Google's own app
+                  already does real turn-by-turn routing, with live
+                  traffic, better than anything worth building here; this
+                  just hands off to it with the destination pre-filled.
+                  No API key needed — this is Google's public "Universal
+                  Cross-Platform Maps URL" scheme, not the Directions API. */}
+              {store?.lat != null && store?.lng != null && (
+                <a
+                  className="sheet-meta__item sheet-directions-link"
+                  href={`https://www.google.com/maps/dir/?api=1&destination=${store.lat},${store.lng}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    color: "var(--color-brand-primary)",
+                    fontWeight: 700,
+                    textDecoration: "none",
+                  }}
+                >
+                  <Navigation size={14} />
+                  <span>{t("storeDetails.getDirections")}</span>
+                </a>
+              )}
             </div>
 
             {/* Search match summary */}
@@ -210,15 +239,14 @@ export default function StoreDetails({ store, searchQuery = "", onClose }) {
               <div className="sheet-match-banner">
                 <Package size={15} />
                 <span>
-                  <strong>{matchedProducts.length}</strong> matching product
-                  {matchedProducts.length !== 1 ? "s" : ""} for "
+                  {t("storeDetails.matchingProducts", matchedProducts.length)} "
                   {searchQuery}"
                 </span>
               </div>
             )}
             {searchQuery.trim() && matchedProducts.length === 0 && (
               <div className="sheet-no-match-banner">
-                "{searchQuery}" is not listed at this store.
+                {t("storeDetails.notListed", searchQuery)}
               </div>
             )}
 
@@ -226,7 +254,7 @@ export default function StoreDetails({ store, searchQuery = "", onClose }) {
             <div className="sheet-inventory">
               <h3 className="sheet-inventory__heading">
                 <Package size={15} />
-                &nbsp;Full Inventory ({store?.inventory.length ?? 0} items)
+                &nbsp;{t("storeDetails.fullInventory", store?.inventory.length ?? 0)}
               </h3>
               <div className="sheet-inventory__list">
                 {sortedInventory.map((product) => (

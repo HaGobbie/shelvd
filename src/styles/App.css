@@ -106,7 +106,7 @@ body {
   font-family: var(--font-body);
   font-size: var(--text-base);
   color: var(--color-text-primary);
-  background: var(--color-brand-primary-dark);
+  background: var(--color-stone-darker);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -139,7 +139,7 @@ a {
   width: 100%;
   height: 100dvh;
   overflow: hidden;
-  background: var(--color-brand-primary-dark);
+  background: var(--color-stone-darker);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -615,7 +615,7 @@ a {
   align-items: center;
   justify-content: center;
   padding: var(--space-5);
-  background: var(--color-brand-primary-dark);
+  background: var(--color-stone-darker);
 }
 
 .login-card {
@@ -745,7 +745,7 @@ a {
   align-items: center;
   justify-content: space-between;
   padding: var(--space-4) var(--space-5);
-  background: var(--color-brand-primary);
+  background: var(--color-stone-dark);
   color: #fff;
   box-shadow: var(--shadow-md);
 }
@@ -1500,7 +1500,7 @@ a {
   align-items: center;
   gap: var(--space-4);
   padding: var(--space-5) var(--space-5);
-  background: var(--color-brand-primary);
+  background: var(--color-stone-dark);
   color: #fff;
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-md);
