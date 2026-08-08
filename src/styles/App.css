@@ -14,36 +14,58 @@
    ══════════════════════════════════════════════════════════════════════════ */
 
 :root {
-  /* Brand */
-  --color-brand-primary: #2c3e50;
-  --color-brand-primary-light: #3d5166;
-  --color-brand-primary-dark: #1a252f;
+  /* ── Brand accent (Soft Terracotta Orange) ──────────────────────────────
+     Used for CTAs, buttons, active states, focus rings, links — NOT for
+     dark structural backgrounds anymore (see --color-stone-dark below).
+     -light is a lifted tint for hover states; -text is a deliberately
+     DARKER shade reserved for small body text on light backgrounds — the
+     base #C85A27 is a mid-tone that's fine for buttons/icons/headings but
+     borderline for small text contrast, so text uses a separate value
+     rather than reusing the accent hex directly everywhere. */
+  --color-brand-primary: #c85a27;
+  --color-brand-primary-light: #d97b4f;
+  --color-brand-primary-text: #a3441a;
 
-  /* Traffic-light palette */
-  --color-available: #2ecc71;
-  --color-available-bg: rgba(46, 204, 113, 0.12);
-  --color-available-border: rgba(46, 204, 113, 0.45);
+  /* ── Dark structural backgrounds (Warm Stone Dark) ──────────────────────
+     Headers, the login screen, the map's outer letterboxing — anywhere
+     that was previously using --color-brand-primary/-dark as a BACKGROUND
+     rather than an accent. Two depths, matching the two-tier dark system
+     that already existed (header bars vs. full-page backgrounds). */
+  --color-stone-dark: #292524;
+  --color-stone-darker: #1c1917;
 
-  --color-low: #f1c40f;
-  --color-low-bg: rgba(241, 196, 15, 0.12);
-  --color-low-border: rgba(241, 196, 15, 0.45);
+  /* ── Traffic-light palette ───────────────────────────────────────────────
+     Emerald / Warm Honey Amber / Coral — chosen partly to stop the old
+     amber (#f1c40f) from clashing with the new terracotta brand color,
+     and partly because these are calibrated shades with solid contrast
+     on light backgrounds (the old amber was borderline here). */
+  --color-available: #16a34a;
+  --color-available-bg: rgba(22, 163, 74, 0.12);
+  --color-available-border: rgba(22, 163, 74, 0.45);
 
-  --color-out: #e74c3c;
-  --color-out-bg: rgba(231, 76, 60, 0.12);
-  --color-out-border: rgba(231, 76, 60, 0.45);
+  --color-low: #d97706;
+  --color-low-bg: rgba(217, 119, 6, 0.12);
+  --color-low-border: rgba(217, 119, 6, 0.45);
 
-  /* Neutrals */
+  --color-out: #dc2626;
+  --color-out-bg: rgba(220, 38, 38, 0.12);
+  --color-out-border: rgba(220, 38, 38, 0.45);
+
+  /* ── Neutrals (warm stone family, replacing the old cool slate tones) ──── */
   --color-surface: #ffffff;
-  --color-surface-2: #f7f9fc;
-  --color-surface-3: #edf1f7;
-  --color-border: #dde3ee;
-  --color-text-primary: #1a252f;
-  --color-text-secondary: #5a6a7e;
-  --color-text-muted: #8a9bb0;
+  --color-surface-2: #fafaf9;
+  --color-surface-3: #f5f5f4;
+  --color-border: #e7e5e4;
+  --color-text-primary: #1c1917;
+  --color-text-secondary: #57534e;
+  --color-text-muted: #a8a29e;
 
-  /* Typography */
-  --font-body: "Roboto", system-ui, sans-serif;
-  --font-heading: "Roboto Condensed", "Roboto", system-ui, sans-serif;
+  /* ── Typography ──────────────────────────────────────────────────────────
+     Plus Jakarta Sans / Inter — already loaded via the Google Fonts
+     <link> in index.html. Falls back to system-ui if that link is ever
+     missing, so nothing breaks without it. */
+  --font-body: "Plus Jakarta Sans", "Inter", system-ui, sans-serif;
+  --font-heading: "Plus Jakarta Sans", "Inter", system-ui, sans-serif;
   --text-xs: 11px;
   --text-sm: 13px;
   --text-base: 15px;
@@ -68,10 +90,12 @@
   --radius-xl: 24px;
   --radius-pill: 999px;
 
-  /* Shadows */
-  --shadow-sm: 0 1px 4px rgba(44, 62, 80, 0.1);
-  --shadow-md: 0 4px 16px rgba(44, 62, 80, 0.13);
-  --shadow-lg: 0 8px 32px rgba(44, 62, 80, 0.18);
+  /* Shadows — warm-toned (based on --color-stone-dark's RGB) rather than
+     the old cool slate-tinted shadow color, so shadows read consistently
+     with the rest of the warm palette instead of looking slightly blue. */
+  --shadow-sm: 0 1px 4px rgba(41, 37, 36, 0.1);
+  --shadow-md: 0 4px 16px rgba(41, 37, 36, 0.13);
+  --shadow-lg: 0 8px 32px rgba(41, 37, 36, 0.18);
 
   /* Motion */
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
