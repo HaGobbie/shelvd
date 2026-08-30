@@ -1,17 +1,16 @@
 // src/i18n/translations.js
 //
-// PHASE 1 SCOPE: covers the public-facing resident map view (search bar,
-// store details sheet, status labels, geolocation prompts, language
-// toggle) — the highest-traffic surface for the "hyper-local, national-
-// scale" audience this toggle is meant for. The Owner Dashboard and
-// registration wizard are NOT translated yet — that's a larger follow-up
-// pass covering many more files, deliberately scoped out for now.
-//
 // Design note: Tagalog strings are written for natural, everyday spoken
 // Filipino (the way a resident would actually read a stock status),
 // not stiff word-for-word translation. Tagalog nouns don't pluralize
 // with a suffix the way English does, so plural-count strings are
 // phrased naturally rather than mechanically porting an English "s".
+//
+// STATUS AUTOMATION: as of this round, status.* labels are still used
+// (for the read-only status preview badge and public-facing badges),
+// but owner.product no longer has a "pick a status" label — quantity/
+// threshold are the two real inputs now; see quantityLabel/thresholdLabel/
+// resultingStatusLabel below.
 
 export const translations = {
   en: {
@@ -78,7 +77,10 @@ export const translations = {
         skuPlaceholder: "e.g. 4901234567894 (optional)",
         descriptionLabel: "Description",
         descriptionPlaceholder: "Optional details — size, weight, packaging, etc.",
-        statusLabel: "Current Status",
+        quantityLabel: "Quantity in Stock",
+        thresholdLabel: "Low Stock Alert Below",
+        resultingStatusLabel: "Resulting Status",
+        resultingStatusHint: "Calculated automatically from quantity vs. threshold — this is what will be saved, not a separate choice.",
         saving: "Saving…",
         saveChanges: "Save Changes",
         addProduct: "Add Product",
@@ -185,8 +187,8 @@ export const translations = {
         colSku: "SKU",
         colPrice: "Price",
         colQuantity: "Quantity",
+        colThreshold: "Low Stock Threshold",
         colUnit: "Unit",
-        colStatus: "Status",
         colDescription: "Description",
         excludedTitle: "Excluded — click to include",
         includedTitle: "Included — click to exclude",
@@ -237,7 +239,7 @@ export const translations = {
         bulkImportCsv: "Bulk Import CSV",
         addProduct: "Add Product",
         filterPlaceholder: "Filter by name or category…",
-        hint: "Tap a product to update its status. Use the pencil to edit details or the bin icon to remove a product.",
+        hint: "Tap a product to adjust its quantity. Use the pencil to edit details or the bin icon to remove a product.",
         noProducts: "No products yet.",
         addFirstProduct: "Add Your First Product",
         noMatch: (q) => `No products match "${q}".`,
@@ -256,6 +258,8 @@ export const translations = {
         deleteStoreDesc2: "and all of its inventory. This cannot be undone.",
         approvalRejected: (reason) => `Registration rejected${reason ? `: ${reason}` : ""}. You can still manage inventory, but this store won't appear on the public map until it's re-approved.`,
         approvalPending: "Pending barangay approval — this store won't appear on the public map yet, but you can manage its inventory now.",
+        stockLabel: "in stock",
+        quickAdjustAria: "Adjust quantity",
       },
     },
   },
@@ -318,7 +322,10 @@ export const translations = {
         skuPlaceholder: "hal. 4901234567894 (opsyonal)",
         descriptionLabel: "Paglalarawan",
         descriptionPlaceholder: "Opsyonal na detalye — sukat, timbang, packaging, atbp.",
-        statusLabel: "Kasalukuyang Status",
+        quantityLabel: "Dami sa Stock",
+        thresholdLabel: "Babalaan Kapag Mas Mababa Sa",
+        resultingStatusLabel: "Magiging Status",
+        resultingStatusHint: "Awtomatikong kinakalkula mula sa dami vs. threshold — ito ang ise-save, hindi ito hiwalay na pagpipilian.",
         saving: "Sine-save…",
         saveChanges: "I-save ang mga Pagbabago",
         addProduct: "Idagdag ang Produkto",
@@ -425,8 +432,8 @@ export const translations = {
         colSku: "SKU",
         colPrice: "Presyo",
         colQuantity: "Dami",
+        colThreshold: "Threshold ng Paubos na Stock",
         colUnit: "Sukat/Yunit",
-        colStatus: "Status",
         colDescription: "Paglalarawan",
         excludedTitle: "Hindi kasama — pindutin para isama",
         includedTitle: "Kasama — pindutin para alisin",
@@ -477,7 +484,7 @@ export const translations = {
         bulkImportCsv: "Mag-import ng CSV",
         addProduct: "Magdagdag ng Produkto",
         filterPlaceholder: "I-filter ayon sa pangalan o kategorya…",
-        hint: "Pindutin ang produkto para i-update ang status nito. Gamitin ang pencil para i-edit ang detalye o ang basurahan para alisin ang produkto.",
+        hint: "Pindutin ang produkto para i-adjust ang dami nito. Gamitin ang pencil para i-edit ang detalye o ang basurahan para alisin ang produkto.",
         noProducts: "Wala pang produkto.",
         addFirstProduct: "Idagdag ang Iyong Unang Produkto",
         noMatch: (q) => `Walang produktong tumutugma sa "${q}".`,
@@ -496,6 +503,8 @@ export const translations = {
         deleteStoreDesc2: "at lahat ng imbentaryo nito. Hindi na ito maibabalik.",
         approvalRejected: (reason) => `Tinanggihan ang pagpaparehistro${reason ? `: ${reason}` : ""}. Maaari mo pa ring pamahalaan ang imbentaryo, pero hindi lalabas ang tindahang ito sa pampublikong mapa hangga't hindi ito muling na-a-approve.`,
         approvalPending: "Naghihintay ng pag-apruba ng barangay — hindi pa lalabas ang tindahang ito sa pampublikong mapa, pero maaari mo nang pamahalaan ang imbentaryo nito ngayon.",
+        stockLabel: "sa stock",
+        quickAdjustAria: "I-adjust ang dami",
       },
     },
   },

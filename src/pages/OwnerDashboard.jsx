@@ -2,18 +2,21 @@
 // Full Owner Dashboard — includes:
 //   ✅ Google Sign-In + Email/Password login (Supabase Auth)
 //   ✅ Auto-routing: no stores found → StoreRegistrationForm
-//   ✅ MULTI-STORE support: switch between stores tied to one account,
-//      add another store, delete a store (falls back to registration
-//      when the account has zero stores left)
-//   ✅ Inventory management is available immediately, regardless of a
-//      store's approval status — a non-blocking banner informs the
-//      owner of pending/rejected status instead of locking them out
-//   ✅ Real-time Inventory listener (Supabase Realtime, scoped to this store)
-//   ✅ Status toggle, Add, Edit, Delete products
-//   ✅ inventory.last_updated bumped automatically by a Postgres trigger
-//   ✅ stores.updated_at bumped automatically by a Postgres trigger on
-//      any inventory change (see 02_functions_and_triggers.sql)
+//   ✅ MULTI-STORE support: switch between stores, add/delete a store
+//   ✅ Inventory management available immediately regardless of approval
+//      status — a non-blocking banner informs instead of locking out
+//   ✅ Real-time Inventory listener (Supabase Realtime, scoped to store)
+//   ✅ Add, Edit, Delete products; quantity quick-adjust
 //   ✅ Full Tagalog translation via useLanguage()/t()
+//
+// STATUS AUTOMATION: the old StatusRadioGroup quick-toggle is GONE. It
+// let an owner set `status` directly, which would have silently
+// conflicted with sync_status_from_quantity() (17_status_automation_and_
+// search_price.sql) — that trigger derives status from quantity/
+// threshold on every write, so a stray direct status write would just
+// get overwritten the next time quantity changed anyway, creating a
+// confusing "why didn't my status stick" experience. Replaced with a
+// QuantityStepper that adjusts the real source of truth directly.
 
 import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -27,6 +30,7 @@ import {
   Clock,
   Package,
   Plus,
+  Minus,
   Pencil,
   Trash2,
   Settings,
@@ -46,31 +50,69 @@ import { useLanguage } from "../i18n/LanguageContext";
 // Colors reference CSS custom properties rather than literal hex — see
 // root-tokens-patch.css from the rebrand pass. Labels come from the
 // `status.*` dictionary entries shared with the public-facing badges.
-const STATUS_OPTIONS = [
-  { value: "available", Icon: PackageCheck, color: "var(--color-available)", bg: "var(--color-available-bg)",  border: "var(--color-available-border)"  },
-  { value: "low",       Icon: AlertTriangle, color: "var(--color-low)", bg: "var(--color-low-bg)", border: "var(--color-low-border)" },
-  { value: "out",       Icon: PackageX,     color: "var(--color-out)", bg: "var(--color-out-bg)",  border: "var(--color-out-border)"  },
-];
+// Still used for the READ-ONLY status pill display — just no longer for
+// an interactive status picker.
+const STATUS_CONFIG = {
+  available: { Icon: PackageCheck, color: "var(--color-available)" },
+  low:       { Icon: AlertTriangle, color: "var(--color-low)" },
+  out:       { Icon: PackageX,     color: "var(--color-out)" },
+};
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-function StatusRadioGroup({ currentStatus, onChange, productId }) {
+/**
+ * QuantityStepper
+ * Replaces the old manual status radio group. Adjusting quantity here
+ * writes directly to the DB via updateProductQuantity() — the
+ * sync_status_from_quantity() trigger derives status the instant this
+ * lands, so there's no separate "now set the status" step anymore.
+ */
+function QuantityStepper({ product, onChange }) {
   const { t } = useLanguage();
+  const [pending, setPending] = useState(false);
+
+  const adjust = async (delta) => {
+    const next = Math.max(0, (product.quantity ?? 0) + delta);
+    if (next === product.quantity) return;
+    setPending(true);
+    await onChange(product.id, next);
+    setPending(false);
+  };
+
   return (
-    <div className="status-radio-group" role="radiogroup">
-      {STATUS_OPTIONS.map(({ value, Icon, color, bg, border }) => {
-        const sel = currentStatus === value;
-        return (
-          <button key={value} type="button" role="radio" aria-checked={sel}
-            className={`status-radio-tile ${sel ? "status-radio-tile--active" : ""}`}
-            style={sel ? { background: bg, borderColor: border, color } : {}}
-            onClick={() => onChange(productId, value)}>
-            <Icon size={22} strokeWidth={sel ? 2.5 : 1.8} />
-            <span>{t(`status.${value}`)}</span>
-            {sel && <CheckCircle2 size={14} className="status-radio-tile__check" style={{ color }} />}
-          </button>
-        );
-      })}
+    <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 8 }}>
+      <button
+        type="button"
+        onClick={() => adjust(-1)}
+        disabled={pending || (product.quantity ?? 0) <= 0}
+        aria-label={t("owner.dashboard.quickAdjustAria")}
+        style={{
+          width: 32, height: 32, borderRadius: "50%",
+          border: "1px solid var(--color-border)", background: "var(--color-surface)",
+          display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
+        }}
+      >
+        <Minus size={14} />
+      </button>
+      <span style={{ minWidth: 40, textAlign: "center", fontWeight: 700, fontSize: 15 }}>
+        {product.quantity ?? 0}
+      </span>
+      <button
+        type="button"
+        onClick={() => adjust(1)}
+        disabled={pending}
+        aria-label={t("owner.dashboard.quickAdjustAria")}
+        style={{
+          width: 32, height: 32, borderRadius: "50%",
+          border: "1px solid var(--color-border)", background: "var(--color-surface)",
+          display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
+        }}
+      >
+        <Plus size={14} />
+      </button>
+      <span style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
+        {(product.unit || "piece")} {t("owner.dashboard.stockLabel")}
+      </span>
     </div>
   );
 }
@@ -90,14 +132,14 @@ function formatStockLine(quantity, unit, language) {
   return `${qty} ${displayUnit}`;
 }
 
-function ProductCard({ product, onStatusChange, onEdit, onDelete }) {
+function ProductCard({ product, onQuantityChange, onEdit, onDelete }) {
   const { t, language } = useLanguage();
   const [expanded, setExpanded] = useState(false);
   const [localSaved, setLocalSaved] = useState(false);
-  const cfg = STATUS_OPTIONS.find((o) => o.value === product.status);
+  const cfg = STATUS_CONFIG[product.status] ?? STATUS_CONFIG.available;
 
-  const handleStatusChange = async (pid, newStatus) => {
-    await onStatusChange(pid, newStatus);
+  const handleQuantityChange = async (pid, newQuantity) => {
+    await onQuantityChange(pid, newQuantity);
     setLocalSaved(true);
     setTimeout(() => setLocalSaved(false), 1800);
   };
@@ -121,7 +163,7 @@ function ProductCard({ product, onStatusChange, onEdit, onDelete }) {
           <div className="product-card__right">
             {localSaved
               ? <span className="product-card__saved"><CheckCircle2 size={14} /> {t("owner.dashboard.saved")}</span>
-              : <span className="product-card__status-pill" style={{ color: cfg?.color, borderColor: cfg?.color }}>{t(`status.${product.status}`)}</span>}
+              : <span className="product-card__status-pill" style={{ color: cfg.color, borderColor: cfg.color }}>{t(`status.${product.status}`)}</span>}
             <span className={`product-card__chevron ${expanded ? "product-card__chevron--open" : ""}`}>▾</span>
           </div>
         </button>
@@ -144,9 +186,6 @@ function ProductCard({ product, onStatusChange, onEdit, onDelete }) {
             <div className="product-card__timestamp">
               <Clock size={12} />&nbsp;{formatLastUpdated(product.lastUpdated)}
             </div>
-            {/* Graceful degradation: SKU/description only render when
-                present — a null value shows nothing here, not an empty
-                "SKU: " line. */}
             {product.sku && (
               <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 4 }}>
                 SKU: {product.sku}
@@ -157,7 +196,7 @@ function ProductCard({ product, onStatusChange, onEdit, onDelete }) {
                 {product.description}
               </p>
             )}
-            <StatusRadioGroup currentStatus={product.status} productId={product.id} onChange={handleStatusChange} />
+            <QuantityStepper product={product} onChange={handleQuantityChange} />
           </motion.div>
         )}
       </AnimatePresence>
@@ -177,19 +216,6 @@ function LoginScreen() {
 
   const handleGoogle = async () => {
     setError(""); setGLoading(true);
-    // Supabase redirects the whole page to Google, then back to this URL —
-    // there's no popup, so we don't clear gLoading in a `finally` here.
-    //
-    // IMPORTANT: redirectTo intentionally has NO "#/dashboard" (or any other
-    // hash) appended. Supabase's OAuth flow appends its own
-    // "#access_token=..." fragment to whatever URL you give it here — a URL
-    // only ever has ONE hash delimiter, so if this already contained a hash,
-    // the two would collide into a single malformed string like
-    // "#/dashboard#access_token=...", which Supabase-js can't parse back out
-    // (it expects the hash to start immediately with "access_token=...").
-    // App.jsx already forwards the user to "#/dashboard" itself once the
-    // session resolves (see redirectFromOAuthHashIfNeeded), so nothing is
-    // lost by leaving it off here.
     const { error: oauthError } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: { redirectTo: window.location.origin + window.location.pathname },
@@ -223,9 +249,7 @@ function LoginScreen() {
         <p className="login-card__subtitle">{t("owner.login.subtitle")}</p>
 
         {/* Google button — brand colors below are Google's own official
-            colors for the "Sign in with Google" button and must stay
-            exactly as-is per Google's brand guidelines, regardless of
-            app theme. */}
+            colors and must stay exactly as-is per Google's brand guidelines. */}
         <button type="button" className="google-signin-btn" onClick={handleGoogle} disabled={gLoading || loading}>
           {gLoading
             ? <span className="map-loading-spinner" style={{ width: 20, height: 20, borderWidth: 2.5, borderTopColor: "#4285F4" }} />
@@ -242,7 +266,6 @@ function LoginScreen() {
 
         <div className="login-divider"><span>{t("owner.login.or")}</span></div>
 
-        {/* Email toggle */}
         <AnimatePresence initial={false}>
           {!showEmailForm ? (
             <motion.button key="toggle" type="button" className="login-email-toggle"
@@ -294,14 +317,9 @@ function ApprovalBanner({ store }) {
   return (
     <div
       style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 10,
-        padding: "10px 16px",
-        borderRadius: "var(--radius-md, 8px)",
-        marginBottom: 16,
-        fontSize: 13,
-        fontWeight: 600,
+        display: "flex", alignItems: "center", gap: 10,
+        padding: "10px 16px", borderRadius: "var(--radius-md, 8px)",
+        marginBottom: 16, fontSize: 13, fontWeight: 600,
         background: isRejected ? "var(--color-out-bg)" : "var(--color-low-bg)",
         border: `1px solid ${isRejected ? "var(--color-out-border)" : "var(--color-low-border)"}`,
         color: isRejected ? "var(--color-out)" : "var(--color-low)",
@@ -318,9 +336,6 @@ function ApprovalBanner({ store }) {
 }
 
 // ─── Delete store confirmation ────────────────────────────────────────────────
-// Mirrors ConfirmDeleteModal.jsx's visual language (same class names) but
-// scoped to deleting a STORE rather than a product, since that component
-// is hardcoded for product deletion.
 function DeleteStoreConfirm({ isOpen, onClose, store, onDeleted }) {
   const { t } = useLanguage();
   const [deleting, setDeleting] = useState(false);
@@ -347,19 +362,16 @@ function DeleteStoreConfirm({ isOpen, onClose, store, onDeleted }) {
       {isOpen && store && (
         <>
           <motion.div
-            className="sheet-overlay"
-            style={{ zIndex: 1100 }}
+            className="sheet-overlay" style={{ zIndex: 1100 }}
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            onClick={onClose}
-            aria-hidden="true"
+            onClick={onClose} aria-hidden="true"
           />
           <motion.div
             className="confirm-dialog"
             initial={{ scale: 0.88, opacity: 0, y: 16 }}
             animate={{ scale: 1, opacity: 1, y: 0, transition: { type: "spring", damping: 22, stiffness: 340 } }}
             exit={{ scale: 0.92, opacity: 0, y: 8 }}
-            role="alertdialog"
-            aria-modal="true"
+            role="alertdialog" aria-modal="true"
           >
             <div className="confirm-dialog__icon-wrap">
               <AlertTriangle size={28} className="confirm-dialog__icon" />
@@ -382,9 +394,7 @@ function DeleteStoreConfirm({ isOpen, onClose, store, onDeleted }) {
                     {t("owner.confirmDelete.deleting")}
                   </>
                 ) : (
-                  <>
-                    <Trash2 size={16} /> {t("owner.confirmDelete.confirm")}
-                  </>
+                  <><Trash2 size={16} /> {t("owner.confirmDelete.confirm")}</>
                 )}
               </button>
             </div>
@@ -407,14 +417,9 @@ function StoreSwitcher({ stores, selectedStoreId, onSelect }) {
         onChange={(e) => onSelect(e.target.value)}
         aria-label={t("owner.dashboard.switchStoreAria")}
         style={{
-          appearance: "none",
-          background: "var(--color-surface)",
-          border: "1px solid var(--color-border)",
-          borderRadius: "var(--radius-md, 8px)",
-          padding: "6px 30px 6px 10px",
-          fontSize: 13,
-          fontWeight: 600,
-          cursor: "pointer",
+          appearance: "none", background: "var(--color-surface)",
+          border: "1px solid var(--color-border)", borderRadius: "var(--radius-md, 8px)",
+          padding: "6px 30px 6px 10px", fontSize: 13, fontWeight: 600, cursor: "pointer",
         }}
       >
         {stores.map((s) => (
@@ -423,10 +428,8 @@ function StoreSwitcher({ stores, selectedStoreId, onSelect }) {
           </option>
         ))}
       </select>
-      <ChevronDown
-        size={14}
-        style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}
-      />
+      <ChevronDown size={14}
+        style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
     </div>
   );
 }
@@ -443,10 +446,6 @@ export default function OwnerDashboard({ session }) {
   const [deleteStoreConfirmOpen, setDeleteStoreConfirmOpen] = useState(false);
   const justAddedRef = useRef(false);
 
-  // Keep selectedStoreId valid as `stores` changes (initial load, another
-  // store added, the selected one deleted, etc). After adding a new store
-  // (justAddedRef), jump to the newest one instead of defaulting to the
-  // first — that's the one the owner just created and expects to land on.
   useEffect(() => {
     if (stores.length === 0) {
       if (selectedStoreId !== null) setSelectedStoreId(null);
@@ -468,7 +467,7 @@ export default function OwnerDashboard({ session }) {
 
   const myStore = stores.find((s) => s.id === selectedStoreId) ?? null;
 
-  const { inventory, updateProductStatus } = useOwnerInventory(myStore?.id ?? null);
+  const { inventory, updateProductQuantity } = useOwnerInventory(myStore?.id ?? null);
 
   const [filterQuery, setFilterQuery]         = useState("");
   const [formModalOpen, setFormModalOpen]     = useState(false);
@@ -478,9 +477,9 @@ export default function OwnerDashboard({ session }) {
   const [storeEditOpen, setStoreEditOpen]     = useState(false);
   const [bulkImportOpen, setBulkImportOpen]   = useState(false);
 
-  const handleStatusChange = async (productId, status) => {
-    const { error } = await updateProductStatus(productId, status);
-    if (error) console.error("Status update failed:", error);
+  const handleQuantityChange = async (productId, quantity) => {
+    const { error } = await updateProductQuantity(productId, quantity);
+    if (error) console.error("Quantity update failed:", error);
   };
 
   const openAddModal    = ()   => { setEditingProduct(null);    setFormModalOpen(true); };
@@ -493,11 +492,6 @@ export default function OwnerDashboard({ session }) {
         p.category.toLowerCase().includes(filterQuery.toLowerCase()))
     : inventory;
 
-  // ── Render states ─────────────────────────────────────────────────────────
-  // NOTE: auth resolution itself (authLoading) already happened in App.jsx
-  // before this component ever mounts — by the time we're here, `session`
-  // is either null (not logged in) or populated. No separate auth-loading
-  // spinner is needed at this level anymore.
   if (!user) return <LoginScreen />;
 
   if (!storesChecked || storesLoading) return (
@@ -506,21 +500,12 @@ export default function OwnerDashboard({ session }) {
     </div>
   );
 
-  // Zero stores → registration wizard (mandatory, no cancel option)
   if (storesChecked && stores.length === 0) {
     return (
-      // NOTE: intentionally NOT using className="dashboard" here — that
-      // class carries the header/toolbar/list flex layout meant for the
-      // main inventory dashboard, not this scrollable multi-step form.
-      // Plain, explicit block layout guarantees this content can scroll
-      // regardless of what .dashboard's own rules assume.
       <div style={{ minHeight: "100dvh", height: "auto", overflowY: "auto", overflowX: "hidden" }}>
         <StoreRegistrationForm
           user={user}
-          onComplete={() => {
-            justAddedRef.current = true;
-            refetchStores();
-          }}
+          onComplete={() => { justAddedRef.current = true; refetchStores(); }}
         />
         <div style={{ textAlign: "center", padding: "16px 0 32px" }}>
           <button type="button"
@@ -533,26 +518,18 @@ export default function OwnerDashboard({ session }) {
     );
   }
 
-  // Adding another store (owner already has ≥1) — same wizard, but
-  // cancelable, and jumps to the new store on completion.
   if (addingStore) {
     return (
       <div style={{ minHeight: "100dvh", height: "auto", overflowY: "auto", overflowX: "hidden" }}>
         <StoreRegistrationForm
           user={user}
           onCancel={() => setAddingStore(false)}
-          onComplete={() => {
-            justAddedRef.current = true;
-            refetchStores();
-            setAddingStore(false);
-          }}
+          onComplete={() => { justAddedRef.current = true; refetchStores(); setAddingStore(false); }}
         />
       </div>
     );
   }
 
-  // Full dashboard for the currently selected store. Approval status no
-  // longer gates this — a banner informs, nothing blocks.
   return (
     <div className="dashboard">
       <header className="dashboard-header">
@@ -571,24 +548,14 @@ export default function OwnerDashboard({ session }) {
             <Plus size={16} strokeWidth={2} />
             <span>{t("owner.dashboard.addStore")}</span>
           </button>
-          <button
-            type="button"
-            className="dashboard-header__edit-store"
-            onClick={() => setStoreEditOpen(true)}
-            aria-label={t("owner.dashboard.editStoreAria")}
-            title={t("owner.dashboard.editStoreLabel")}
-          >
+          <button type="button" className="dashboard-header__edit-store" onClick={() => setStoreEditOpen(true)}
+            aria-label={t("owner.dashboard.editStoreAria")} title={t("owner.dashboard.editStoreLabel")}>
             <Settings size={16} strokeWidth={2} />
             <span>{t("owner.dashboard.editStoreLabel")}</span>
           </button>
-          <button
-            type="button"
-            className="dashboard-header__edit-store"
-            onClick={() => setDeleteStoreConfirmOpen(true)}
-            aria-label={t("owner.dashboard.deleteStoreAria")}
-            title={t("owner.dashboard.deleteStoreLabel")}
-            style={{ color: "var(--color-out)", borderColor: "var(--color-out-border)" }}
-          >
+          <button type="button" className="dashboard-header__edit-store" onClick={() => setDeleteStoreConfirmOpen(true)}
+            aria-label={t("owner.dashboard.deleteStoreAria")} title={t("owner.dashboard.deleteStoreLabel")}
+            style={{ color: "var(--color-out)", borderColor: "var(--color-out-border)" }}>
             <Trash2 size={16} strokeWidth={2} />
             <span>{t("owner.dashboard.deleteStoreLabel")}</span>
           </button>
@@ -613,18 +580,10 @@ export default function OwnerDashboard({ session }) {
               type="button"
               onClick={() => setBulkImportOpen(true)}
               style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                height: 44,
-                padding: "0 16px",
-                borderRadius: "var(--radius-pill, 999px)",
-                fontSize: 13,
-                fontWeight: 700,
-                fontFamily: "var(--font-heading, inherit)",
-                whiteSpace: "nowrap",
-                background: "transparent",
-                color: "var(--color-brand-primary)",
+                display: "inline-flex", alignItems: "center", gap: 6, height: 44, padding: "0 16px",
+                borderRadius: "var(--radius-pill, 999px)", fontSize: 13, fontWeight: 700,
+                fontFamily: "var(--font-heading, inherit)", whiteSpace: "nowrap",
+                background: "transparent", color: "var(--color-brand-primary)",
                 border: "1.5px solid var(--color-brand-primary)",
               }}
             >
@@ -648,9 +607,7 @@ export default function OwnerDashboard({ session }) {
           </div>
         )}
 
-        <p className="dashboard-hint">
-          {t("owner.dashboard.hint")}
-        </p>
+        <p className="dashboard-hint">{t("owner.dashboard.hint")}</p>
 
         {inventory.length === 0 && (
           <div className="dashboard-empty">
@@ -670,7 +627,7 @@ export default function OwnerDashboard({ session }) {
           <AnimatePresence>
             {filteredInventory.map((product) => (
               <ProductCard key={product.id} product={product}
-                onStatusChange={handleStatusChange} onEdit={openEditModal} onDelete={openDeleteModal} />
+                onQuantityChange={handleQuantityChange} onEdit={openEditModal} onDelete={openDeleteModal} />
             ))}
           </AnimatePresence>
         </div>
@@ -680,27 +637,13 @@ export default function OwnerDashboard({ session }) {
         storeId={myStore?.id} initialData={editingProduct} />
       <ConfirmDeleteModal isOpen={deleteModalOpen} onClose={() => setDeleteModalOpen(false)}
         storeId={myStore?.id} product={deletingProduct} />
-      <StoreEditModal
-        isOpen={storeEditOpen}
-        onClose={() => setStoreEditOpen(false)}
-        store={myStore}
-      />
-      <BulkImportModal
-        isOpen={bulkImportOpen}
-        onClose={() => setBulkImportOpen(false)}
-        storeId={myStore?.id}
-      />
+      <StoreEditModal isOpen={storeEditOpen} onClose={() => setStoreEditOpen(false)} store={myStore} />
+      <BulkImportModal isOpen={bulkImportOpen} onClose={() => setBulkImportOpen(false)} storeId={myStore?.id} />
       <DeleteStoreConfirm
         isOpen={deleteStoreConfirmOpen}
         onClose={() => setDeleteStoreConfirmOpen(false)}
         store={myStore}
-        onDeleted={() => {
-          // After deletion, `stores` will update via realtime/refetch and
-          // the useEffect above will pick a new valid selectedStoreId
-          // automatically (or fall through to the registration wizard if
-          // that was the last one).
-          refetchStores();
-        }}
+        onDeleted={() => refetchStores()}
       />
     </div>
   );

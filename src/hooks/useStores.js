@@ -6,6 +6,13 @@
 // snake_case columns — it maps in both directions so the rest of your
 // components (StoreDetails, ProductFormModal, StoreEditModal, etc.) needed
 // minimal changes.
+//
+// STATUS AUTOMATION: as of 17_status_automation_and_search_price.sql,
+// `status` is fully derived server-side from quantity vs
+// low_stock_threshold. Nothing in this file writes `status` directly
+// anymore — updateProductStatus() is gone, replaced by
+// updateProductQuantity(), and bulkUpsertInventory() no longer sends a
+// status field at all.
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "../config/supabaseClient";
@@ -66,14 +73,6 @@ function mapMarkerRow(row) {
 
 // ─── Public utility: relative time formatting ───────────────────────────────
 
-/**
- * formatLastUpdated
- * Formats a Supabase `timestamptz` (ISO string) into a short relative
- * string like "Updated 2 mins ago". Falls back gracefully on bad input.
- *
- * @param {string|Date|null|undefined} timestamp
- * @returns {string}
- */
 export function formatLastUpdated(timestamp) {
   if (!timestamp) return "Updated recently";
 
@@ -101,34 +100,12 @@ export function formatLastUpdated(timestamp) {
   })}`;
 }
 
-/**
- * formatPrice
- * Formats a numeric price as a clean peso string, e.g. 55 -> "₱55.00".
- * Returns a neutral placeholder for null/undefined/invalid values rather
- * than throwing or rendering "₱NaN" — shouldn't normally happen now that
- * price is NOT NULL in the DB, but defends against stale cached data.
- *
- * @param {number|string|null|undefined} price
- * @returns {string}
- */
 export function formatPrice(price) {
   const num = typeof price === "number" ? price : Number(price);
   if (price === null || price === undefined || Number.isNaN(num)) return "—";
   return `₱${num.toFixed(2)}`;
 }
 
-/**
- * getWorstStatusForQuery
- * Given a store's full inventory array and a search query, returns the
- * worst status ("out" > "low" > "available") among matching products, or
- * null if nothing matches. Used when you already have inventory loaded
- * (e.g. inside an open StoreDetails sheet) — NOT for the map, which uses
- * the server-side search_inventory() RPC instead (see searchInventory below).
- *
- * @param {Array} inventory
- * @param {string} query
- * @returns {"out"|"low"|"available"|null}
- */
 export function getWorstStatusForQuery(inventory, query) {
   const q = query.trim().toLowerCase();
   if (!q) return null;
@@ -143,11 +120,6 @@ export function getWorstStatusForQuery(inventory, query) {
 
 // ─── useMapMarkers ───────────────────────────────────────────────────────────
 
-/**
- * useMapMarkers
- * Minimal payload for the public map: id, name, coords, worstStatus.
- * Never selects full inventory — that stays on-demand (see useStoreDetails).
- */
 export function useMapMarkers() {
   const [markers, setMarkers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -190,15 +162,6 @@ export function useMapMarkers() {
 
 // ─── useStoreDetails ─────────────────────────────────────────────────────────
 
-/**
- * useStoreDetails
- * Full store + inventory, fetched ONLY when storeId is set (i.e. a pin
- * was tapped). Returns a single merged object shaped like your old
- * Firestore `store` (with `.inventory` attached), so StoreDetails.jsx,
- * ProductFormModal.jsx, etc. need no prop-shape changes.
- *
- * @param {string|null} storeId
- */
 export function useStoreDetails(storeId) {
   const [store, setStore] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -278,16 +241,6 @@ export function useStoreDetails(storeId) {
 
 // ─── useMyStores (all stores owned by this account, any status) ────────────
 
-/**
- * useMyStores
- * For the Owner Dashboard: finds ALL stores owned by the logged-in user
- * (regardless of approval status — pending/approved/rejected all return
- * here), with realtime updates (e.g. when a barangay official approves
- * one, or another tab adds/removes a store). Supports multiple stores
- * per account.
- *
- * @param {string|null} userId — supabase auth user id (user.id)
- */
 export function useMyStores(userId) {
   const [stores, setStores] = useState([]);
   const [checked, setChecked] = useState(false);
@@ -346,45 +299,27 @@ export function useMyStores(userId) {
 
 /**
  * bulkUpsertInventory
- * Used by the CSV bulk-import feature. Two things this function is
- * deliberately strict about:
+ * store_id is injected client-side from the trusted `storeId` argument —
+ * never trusted from the CSV. All rows go in ONE .upsert() call so
+ * Postgres treats the whole batch as one atomic statement.
  *
- * 1. SCOPING: `store_id` is injected into every row HERE, client-side,
- *    from the trusted `storeId` argument — never trust a store_id that
- *    might be present in an uploaded CSV. Even if a malicious or
- *    corrupted file contained a store_id column, it's discarded; the
- *    caller's own active store is the only source of truth.
- * 2. ATOMICITY: all rows are sent in ONE .upsert() call, which Postgres/
- *    PostgREST executes as a single statement in a single transaction —
- *    if any row violates a constraint (e.g. the NOT NULL price check),
- *    the ENTIRE batch is rejected and nothing is written. Do not loop
- *    this per-row; that would insert some rows and not others on a
- *    partial failure, which is exactly what this function exists to avoid.
- *
- * quantity/sku/description/unit are all OPTIONAL — rows that don't
- * include them (e.g. the current BulkImportModal.jsx, which only sends
- * name/category/price/status) still work unchanged; they just get the
- * same DB defaults a manually-added product would (quantity 0, sku/
- * description null, unit 'piece').
+ * STATUS AUTOMATION: `status` is deliberately NOT sent — the
+ * sync_status_from_quantity() trigger derives it from quantity/
+ * low_stock_threshold on every insert and every update touching either
+ * column, which this upsert always does.
  *
  * @param {string} storeId
- * @param {Array<{
- *   name: string, category: string, price: number, status: string,
- *   quantity?: number, sku?: string|null, description?: string|null,
- *   unit?: string
- * }>} rows
+ * @param {Array<{name, category, price, quantity?, lowStockThreshold?, sku?, description?, unit?}>} rows
  * @param {{ overwrite: boolean }} options
- *   overwrite: true  -> matching (store_id, name) rows are UPDATED (last write wins)
- *   overwrite: false -> matching (store_id, name) rows are SKIPPED, only new rows inserted
  */
 export async function bulkUpsertInventory(storeId, rows, { overwrite } = { overwrite: false }) {
   const payload = rows.map((row) => ({
-    store_id: storeId, // injected here — never taken from the CSV/caller-supplied row
+    store_id: storeId,
     name: row.name,
     category: row.category,
     price: row.price,
-    status: row.status ?? "available",
     quantity: row.quantity ?? 0,
+    low_stock_threshold: row.lowStockThreshold ?? 5,
     sku: row.sku ?? null,
     description: row.description ?? null,
     unit: row.unit ?? "piece",
@@ -396,30 +331,15 @@ export async function bulkUpsertInventory(storeId, rows, { overwrite } = { overw
       onConflict: "store_id,name_normalized",
       ignoreDuplicates: !overwrite,
     })
-    .select("id, name, price, status, quantity, sku, description, unit");
+    .select("id, name, price, status, quantity, low_stock_threshold, sku, description, unit");
 }
 
-/**
- * deleteStore
- * Deletes a store the current user owns. Inventory/feedback/user_alerts
- * rows cascade-delete automatically (see 01_schema_and_postgis.sql FK
- * definitions); a linked profiles.store_id is set NULL instead of blocking
- * the delete. Requires 13_store_owner_delete.sql to have been run (RLS +
- * grant for DELETE on stores didn't exist before that).
- *
- * @param {string} storeId
- */
 export async function deleteStore(storeId) {
   return supabase.from("stores").delete().eq("id", storeId);
 }
 
 // ─── useOwnerInventory ───────────────────────────────────────────────────────
 
-/**
- * useOwnerInventory
- * Realtime inventory list + mutation helpers for the Owner Dashboard.
- * @param {string|null} storeId
- */
 export function useOwnerInventory(storeId) {
   const [inventory, setInventory] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -472,26 +392,37 @@ export function useOwnerInventory(storeId) {
     };
   }, [storeId]);
 
-  const updateProductStatus = useCallback(async (productId, status) => {
-    const VALID = ["available", "low", "out"];
-    if (!VALID.includes(status)) {
-      console.error(`Invalid status "${status}". Must be one of: ${VALID.join(", ")}`);
-      return { error: new Error("invalid status") };
+  /**
+   * updateProductQuantity
+   * REPLACES the old updateProductStatus() — status is no longer directly
+   * settable. Updates quantity (and optionally low_stock_threshold); the
+   * DB trigger derives status the instant this UPDATE lands.
+   *
+   * @param {string} productId
+   * @param {number} quantity
+   * @param {number} [lowStockThreshold] — omit to leave threshold unchanged
+   */
+  const updateProductQuantity = useCallback(async (productId, quantity, lowStockThreshold) => {
+    if (!Number.isFinite(quantity) || quantity < 0) {
+      console.error(`Invalid quantity "${quantity}" — must be a non-negative number.`);
+      return { error: new Error("invalid quantity") };
     }
-    return supabase.from("inventory").update({ status }).eq("id", productId);
+    const patch = { quantity: Math.floor(quantity) };
+    if (lowStockThreshold !== undefined) {
+      if (!Number.isFinite(lowStockThreshold) || lowStockThreshold < 0) {
+        console.error(`Invalid low_stock_threshold "${lowStockThreshold}" — must be a non-negative number.`);
+        return { error: new Error("invalid low_stock_threshold") };
+      }
+      patch.low_stock_threshold = Math.floor(lowStockThreshold);
+    }
+    return supabase.from("inventory").update(patch).eq("id", productId);
   }, []);
 
-  return { inventory, loading, updateProductStatus };
+  return { inventory, loading, updateProductQuantity };
 }
 
 // ─── One-shot server-side helpers (RPCs) ────────────────────────────────────
 
-/**
- * searchInventory
- * Runs the search_inventory() Postgres function — filtering happens in
- * the DB, not in the browser. Returns rows shaped for the map/search UI.
- * @param {string} term
- */
 export async function searchInventory(term) {
   if (!term || !term.trim()) return [];
   const { data, error } = await supabase.rpc("search_inventory", { search_term: term.trim() });
@@ -506,17 +437,12 @@ export async function searchInventory(term) {
     productId: row.product_id,
     productName: row.product_name,
     category: row.category,
+    price: row.price,
     status: row.status,
     rank: row.rank,
   }));
 }
 
-/**
- * nearbyStores — "stores near me", sorted server-side by distance.
- * @param {number} lat
- * @param {number} lng
- * @param {number} radiusMeters
- */
 export async function nearbyStores(lat, lng, radiusMeters = 5000) {
   const { data, error } = await supabase.rpc("nearby_stores", {
     lat,
@@ -536,16 +462,6 @@ export async function nearbyStores(lat, lng, radiusMeters = 5000) {
   }));
 }
 
-/**
- * useDebouncedSearchMatches
- * Convenience hook for App.jsx: debounces `searchQuery`, calls
- * searchInventory(), and returns a Map<storeId, { count, worstStatus }>
- * that MapContainer/StoreMarker can use to highlight/color pins without
- * ever loading full inventory into the client.
- *
- * @param {string} searchQuery
- * @param {number} debounceMs
- */
 export function useDebouncedSearchMatches(searchQuery, debounceMs = 300) {
   const [matches, setMatches] = useState(new Map());
   const [searching, setSearching] = useState(false);

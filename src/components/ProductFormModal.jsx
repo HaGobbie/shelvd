@@ -1,23 +1,17 @@
 // src/components/ProductFormModal.jsx
 // Framer Motion bottom-sheet modal for Adding and Editing a product.
-// Used by OwnerDashboard — receives an `initialData` prop that is null
-// when adding a new product, or a product object when editing.
 //
-// Supabase operations:
-//   ADD  → supabase.from('inventory').insert({ store_id, name, category, price, status })
-//   EDIT → supabase.from('inventory').update({ name, category, price, status }).eq('id', productId)
+// STATUS AUTOMATION: manual "Stock Status" selection is GONE as of this
+// round. Status is fully derived server-side by
+// sync_status_from_quantity() (17_status_automation_and_search_price.sql)
+// from quantity vs low_stock_threshold — this form never sends `status`.
+// In its place: a read-only live preview badge, computed client-side
+// with the EXACT SAME logic as the DB trigger.
 //
-// Note: we don't send last_updated manually — the `inventory_touch_last_updated`
-// trigger (see 02_functions_and_triggers.sql) bumps it automatically on update,
-// and it defaults to now() on insert.
-//
-// NOTE ON CATEGORIES: the dropdown VALUES stay in English regardless of
-// the current UI language — they're stored as-is in the database and
-// shown on the public map, so translating only the surrounding labels
-// (not the stored value) avoids a mismatch between what's picked and
-// what's actually saved.
+// NOTE ON CATEGORIES: dropdown VALUES stay in English regardless of UI
+// language — stored as-is in the DB and shown on the public map.
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X,
@@ -30,52 +24,29 @@ import {
 import { supabase } from "../config/supabaseClient";
 import { useLanguage } from "../i18n/LanguageContext";
 
-// ─── Predefined categories matching your capstone domain ─────────────────────
 const CATEGORIES = [
-  "Pantry",
-  "Grains",
-  "Canned Goods",
-  "Beverages",
-  "Condiments",
-  "Dairy & Eggs",
-  "Household",
-  "Personal Care",
-  "Snacks",
-  "Frozen Goods",
-  "Other",
+  "Pantry", "Grains", "Canned Goods", "Beverages", "Condiments",
+  "Dairy & Eggs", "Household", "Personal Care", "Snacks", "Frozen Goods", "Other",
 ];
 
-// Colors reference CSS custom properties rather than literal hex — see
-// root-tokens-patch.css / COLOR_DECOUPLING_PATCHES.txt from the rebrand
-// pass. Labels come from the current language's `status.*` dictionary
-// entries (shared with the public-facing status badges) rather than
-// being hardcoded here, so there's one source of truth for these three
-// words across the whole app.
-const STATUS_OPTIONS = [
-  {
-    value: "available",
-    Icon: PackageCheck,
-    color: "var(--color-available)",
-    bg: "var(--color-available-bg)",
-    border: "var(--color-available-border)",
-  },
-  {
-    value: "low",
-    Icon: AlertTriangle,
-    color: "var(--color-low)",
-    bg: "var(--color-low-bg)",
-    border: "var(--color-low-border)",
-  },
-  {
-    value: "out",
-    Icon: PackageX,
-    color: "var(--color-out)",
-    bg: "var(--color-out-bg)",
-    border: "var(--color-out-border)",
-  },
-];
+// Kept for the live preview badge's colors/icons only — no longer drives
+// an interactive radio group. Labels come from `status.*` in translations.js.
+const STATUS_CONFIG = {
+  available: { Icon: PackageCheck, color: "var(--color-available)", bg: "var(--color-available-bg)", border: "var(--color-available-border)" },
+  low:       { Icon: AlertTriangle, color: "var(--color-low)", bg: "var(--color-low-bg)", border: "var(--color-low-border)" },
+  out:       { Icon: PackageX, color: "var(--color-out)", bg: "var(--color-out-bg)", border: "var(--color-out-border)" },
+};
 
-// ─── Animation variants ───────────────────────────────────────────────────────
+/**
+ * computeStatus — MUST mirror sync_status_from_quantity() in
+ * 17_status_automation_and_search_price.sql exactly.
+ */
+function computeStatus(quantity, lowStockThreshold) {
+  if (quantity <= 0) return "out";
+  if (quantity <= lowStockThreshold) return "low";
+  return "available";
+}
+
 const overlayVariants = {
   hidden: { opacity: 0 },
   visible: { opacity: 1, transition: { duration: 0.2 } },
@@ -84,49 +55,19 @@ const overlayVariants = {
 
 const sheetVariants = {
   hidden:  { y: "100%", opacity: 0 },
-  visible: {
-    y: 0,
-    opacity: 1,
-    transition: { type: "spring", damping: 28, stiffness: 320, mass: 0.9 },
-  },
-  exit: {
-    y: "100%",
-    opacity: 0,
-    transition: { type: "tween", ease: "easeIn", duration: 0.2 },
-  },
+  visible: { y: 0, opacity: 1, transition: { type: "spring", damping: 28, stiffness: 320, mass: 0.9 } },
+  exit:    { y: "100%", opacity: 0, transition: { type: "tween", ease: "easeIn", duration: 0.2 } },
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * @typedef {Object} ProductFormModalProps
- * @property {boolean}       isOpen
- * @property {Function}      onClose
- * @property {string}        storeId      — the store this product belongs to
- * @property {Object|null}   initialData  — null = Add mode, object = Edit mode
- */
-
-/**
- * ProductFormModal
- * Single component that handles both Add and Edit flows.
- * The title and submit button label change based on whether initialData is provided.
- *
- * @param {ProductFormModalProps} props
- */
-export default function ProductFormModal({
-  isOpen,
-  onClose,
-  storeId,
-  initialData = null,
-}) {
+export default function ProductFormModal({ isOpen, onClose, storeId, initialData = null }) {
   const { t } = useLanguage();
   const isEditMode = Boolean(initialData);
 
-  // ─── Form state ────────────────────────────────────────────────────────────
   const [name, setName]           = useState("");
   const [category, setCategory]   = useState(CATEGORIES[0]);
   const [price, setPrice]         = useState("");
-  const [status, setStatus]       = useState("available");
+  const [quantity, setQuantity]   = useState("0");
+  const [lowStockThreshold, setLowStockThreshold] = useState("5");
   const [description, setDescription] = useState("");
   const [unit, setUnit]           = useState("piece");
   const [sku, setSku]             = useState("");
@@ -135,48 +76,43 @@ export default function ProductFormModal({
   const [error, setError]         = useState("");
   const nameInputRef              = useRef(null);
 
-  // Populate form when editing or reset when adding
   useEffect(() => {
     if (isOpen) {
       if (isEditMode && initialData) {
         setName(initialData.name ?? "");
-        setStatus(initialData.status ?? "available");
-        setPrice(
-          initialData.price !== null && initialData.price !== undefined
-            ? String(initialData.price)
-            : ""
-        );
-        // Graceful degradation: null/undefined sku or description just
-        // become an empty string in the input, not "null" text.
+        setPrice(initialData.price !== null && initialData.price !== undefined ? String(initialData.price) : "");
+        setQuantity(initialData.quantity !== null && initialData.quantity !== undefined ? String(initialData.quantity) : "0");
+        setLowStockThreshold(initialData.lowStockThreshold !== null && initialData.lowStockThreshold !== undefined ? String(initialData.lowStockThreshold) : "5");
         setDescription(initialData.description ?? "");
         setUnit(initialData.unit ?? "piece");
         setSku(initialData.sku ?? "");
-        // If the stored category matches a preset, select it; otherwise use "Other"
         const match = CATEGORIES.includes(initialData.category);
         setCategory(match ? initialData.category : "Other");
         setCustomCategory(match ? "" : (initialData.category ?? ""));
       } else {
-        setName("");
-        setCategory(CATEGORIES[0]);
-        setPrice("");
-        setStatus("available");
-        setCustomCategory("");
-        setDescription("");
-        setUnit("piece");
-        setSku("");
+        setName(""); setCategory(CATEGORIES[0]); setPrice("");
+        setQuantity("0"); setLowStockThreshold("5"); setCustomCategory("");
+        setDescription(""); setUnit("piece"); setSku("");
       }
       setError("");
-      // Auto-focus the name field after the animation settles
       setTimeout(() => nameInputRef.current?.focus(), 320);
     }
   }, [isOpen, isEditMode, initialData]);
 
-  // ─── Validation ────────────────────────────────────────────────────────────
+  const previewStatus = useMemo(() => {
+    const qtyNum = Number(quantity);
+    const thresholdNum = Number(lowStockThreshold);
+    const safeQty = Number.isFinite(qtyNum) && qtyNum >= 0 ? qtyNum : 0;
+    const safeThreshold = Number.isFinite(thresholdNum) && thresholdNum >= 0 ? thresholdNum : 5;
+    return computeStatus(safeQty, safeThreshold);
+  }, [quantity, lowStockThreshold]);
+
+  const previewCfg = STATUS_CONFIG[previewStatus];
+
   const validate = () => {
     if (!name.trim()) return t("owner.product.requiredName");
     if (name.trim().length > 80) return t("owner.product.nameTooLong");
-    if (category === "Other" && !customCategory.trim())
-      return t("owner.product.customCategoryRequired");
+    if (category === "Other" && !customCategory.trim()) return t("owner.product.customCategoryRequired");
     if (price.trim() === "") return t("owner.product.priceRequired");
     const priceNum = Number(price);
     if (Number.isNaN(priceNum)) return t("owner.product.priceInvalid");
@@ -184,7 +120,6 @@ export default function ProductFormModal({
     return null;
   };
 
-  // ─── Submit ────────────────────────────────────────────────────────────────
   const handleSubmit = async (e) => {
     e.preventDefault();
     const validationError = validate();
@@ -193,55 +128,35 @@ export default function ProductFormModal({
     setSaving(true);
     setError("");
 
-    const finalCategory =
-      category === "Other" ? customCategory.trim() : category;
+    const finalCategory = category === "Other" ? customCategory.trim() : category;
     const finalPrice = Number(price);
-    // Optional fields: empty string -> null/default rather than storing
-    // an empty string, so "no SKU" reads as genuinely absent, not as a
-    // blank-but-present value.
     const finalSku = sku.trim() || null;
     const finalDescription = description.trim() || null;
     const finalUnit = unit.trim() || "piece";
+    const qtyNum = Number(quantity);
+    const thresholdNum = Number(lowStockThreshold);
+    const finalQuantity = Number.isFinite(qtyNum) && qtyNum >= 0 ? Math.floor(qtyNum) : 0;
+    const finalLowStockThreshold = Number.isFinite(thresholdNum) && thresholdNum >= 0 ? Math.floor(thresholdNum) : 5;
 
     try {
       if (isEditMode) {
-        // EDIT: update the existing row (last_updated bumped by trigger)
-        const { error: updateError } = await supabase
-          .from("inventory")
-          .update({
-            name: name.trim(),
-            category: finalCategory,
-            price: finalPrice,
-            status,
-            sku: finalSku,
-            description: finalDescription,
-            unit: finalUnit,
-          })
-          .eq("id", initialData.id);
-
+        const { error: updateError } = await supabase.from("inventory").update({
+          name: name.trim(), category: finalCategory, price: finalPrice,
+          quantity: finalQuantity, low_stock_threshold: finalLowStockThreshold,
+          sku: finalSku, description: finalDescription, unit: finalUnit,
+        }).eq("id", initialData.id);
         if (updateError) throw updateError;
       } else {
-        // ADD: insert a new row (id + last_updated default automatically)
         const { error: insertError } = await supabase.from("inventory").insert({
-          store_id: storeId,
-          name: name.trim(),
-          category: finalCategory,
-          price: finalPrice,
-          status,
-          sku: finalSku,
-          description: finalDescription,
-          unit: finalUnit,
+          store_id: storeId, name: name.trim(), category: finalCategory, price: finalPrice,
+          quantity: finalQuantity, low_stock_threshold: finalLowStockThreshold,
+          sku: finalSku, description: finalDescription, unit: finalUnit,
         });
-
         if (insertError) throw insertError;
       }
       onClose();
     } catch (err) {
       console.error("Supabase write failed:", err);
-      // The partial unique index on (store_id, sku) throws a specific,
-      // recognizable Postgres error — worth a clearer message than the
-      // generic fallback, since "duplicate key" would otherwise look
-      // like an unexplained failure to the store owner.
       if (err?.message?.includes("inventory_store_sku_uidx")) {
         setError(t("owner.product.skuDuplicate"));
       } else {
@@ -256,262 +171,149 @@ export default function ProductFormModal({
     <AnimatePresence>
       {isOpen && (
         <>
-          {/* Dimmed backdrop */}
-          <motion.div
-            className="sheet-overlay"
-            style={{ zIndex: 1000 }}
-            variants={overlayVariants}
-            initial="hidden"
-            animate="visible"
-            exit="exit"
-            onClick={onClose}
-            aria-hidden="true"
-          />
+          <motion.div className="sheet-overlay" style={{ zIndex: 1000 }}
+            variants={overlayVariants} initial="hidden" animate="visible" exit="exit"
+            onClick={onClose} aria-hidden="true" />
 
-          {/* Sheet panel */}
-          <motion.div
-            className="sheet-panel"
-            style={{ zIndex: 1001, maxHeight: "92dvh" }}
-            variants={sheetVariants}
-            initial="hidden"
-            animate="visible"
-            exit="exit"
-            drag="y"
-            dragConstraints={{ top: 0 }}
-            dragElastic={{ top: 0, bottom: 0.4 }}
+          <motion.div className="sheet-panel" style={{ zIndex: 1001, maxHeight: "92dvh" }}
+            variants={sheetVariants} initial="hidden" animate="visible" exit="exit"
+            drag="y" dragConstraints={{ top: 0 }} dragElastic={{ top: 0, bottom: 0.4 }}
             onDragEnd={(_, info) => { if (info.offset.y > 100) onClose(); }}
-            role="dialog"
-            aria-modal="true"
-            aria-label={isEditMode ? t("owner.product.editTitle") : t("owner.product.addTitle")}
-          >
-            {/* Drag handle */}
+            role="dialog" aria-modal="true"
+            aria-label={isEditMode ? t("owner.product.editTitle") : t("owner.product.addTitle")}>
+
             <div className="sheet-handle" aria-hidden="true" />
 
-            {/* Header */}
             <div className="sheet-header">
               <div className="sheet-header__info">
                 <h2 className="sheet-header__name">
                   {isEditMode ? t("owner.product.editTitle") : t("owner.product.addTitle")}
                 </h2>
                 <span className="sheet-header__type">
-                  {isEditMode
-                    ? t("owner.product.editSubtitle")
-                    : t("owner.product.addSubtitle")}
+                  {isEditMode ? t("owner.product.editSubtitle") : t("owner.product.addSubtitle")}
                 </span>
               </div>
-              <button
-                className="sheet-close-btn"
-                onClick={onClose}
-                aria-label={t("owner.product.close")}
-                type="button"
-              >
+              <button className="sheet-close-btn" onClick={onClose} aria-label={t("owner.product.close")} type="button">
                 <X size={20} strokeWidth={2} />
               </button>
             </div>
 
-            {/* Form body */}
             <div className="sheet-inventory" style={{ padding: "16px 20px 32px" }}>
               <form onSubmit={handleSubmit} noValidate>
 
-                {/* ── Product Name ── */}
                 <div className="pform__field">
                   <label className="pform__label" htmlFor="pform-name">
                     {t("owner.product.nameLabel")} <span className="pform__required">*</span>
                   </label>
-                  <input
-                    ref={nameInputRef}
-                    id="pform-name"
-                    className="pform__input"
-                    type="text"
-                    placeholder={t("owner.product.namePlaceholder")}
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    maxLength={80}
-                    autoComplete="off"
-                  />
+                  <input ref={nameInputRef} id="pform-name" className="pform__input" type="text"
+                    placeholder={t("owner.product.namePlaceholder")} value={name}
+                    onChange={(e) => setName(e.target.value)} maxLength={80} autoComplete="off" />
                   <span className="pform__char-count">{name.length}/80</span>
                 </div>
 
-                {/* ── Category ── */}
                 <div className="pform__field">
                   <label className="pform__label" htmlFor="pform-category">
                     {t("owner.product.categoryLabel")} <span className="pform__required">*</span>
                   </label>
-                  <select
-                    id="pform-category"
-                    className="pform__select"
-                    value={category}
-                    onChange={(e) => setCategory(e.target.value)}
-                  >
-                    {CATEGORIES.map((cat) => (
-                      <option key={cat} value={cat}>{cat}</option>
-                    ))}
+                  <select id="pform-category" className="pform__select" value={category}
+                    onChange={(e) => setCategory(e.target.value)}>
+                    {CATEGORIES.map((cat) => <option key={cat} value={cat}>{cat}</option>)}
                   </select>
-                  {/* Custom category input shown only when "Other" is selected */}
                   <AnimatePresence>
                     {category === "Other" && (
-                      <motion.div
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: "auto", opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        transition={{ duration: 0.18 }}
-                        style={{ overflow: "hidden" }}
-                      >
-                        <input
-                          className="pform__input"
-                          style={{ marginTop: 8 }}
-                          type="text"
-                          placeholder={t("owner.product.customCategoryPlaceholder")}
-                          value={customCategory}
-                          onChange={(e) => setCustomCategory(e.target.value)}
-                          maxLength={40}
-                          autoComplete="off"
-                        />
+                      <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.18 }} style={{ overflow: "hidden" }}>
+                        <input className="pform__input" style={{ marginTop: 8 }} type="text"
+                          placeholder={t("owner.product.customCategoryPlaceholder")} value={customCategory}
+                          onChange={(e) => setCustomCategory(e.target.value)} maxLength={40} autoComplete="off" />
                       </motion.div>
                     )}
                   </AnimatePresence>
                 </div>
 
-                {/* ── Price ── */}
                 <div className="pform__field">
                   <label className="pform__label" htmlFor="pform-price">
                     {t("owner.product.priceLabel")} <span className="pform__required">*</span>
                   </label>
-                  <input
-                    id="pform-price"
-                    className="pform__input"
-                    type="number"
-                    inputMode="decimal"
-                    min="0"
-                    step="0.01"
-                    placeholder="0.00"
-                    value={price}
-                    onChange={(e) => setPrice(e.target.value)}
-                  />
+                  <input id="pform-price" className="pform__input" type="number" inputMode="decimal"
+                    min="0" step="0.01" placeholder="0.00" value={price}
+                    onChange={(e) => setPrice(e.target.value)} />
                 </div>
 
-                {/* ── Unit (optional) ── */}
                 <div className="pform__field">
-                  <label className="pform__label" htmlFor="pform-unit">
-                    {t("owner.product.unitLabel")}
-                  </label>
-                  <input
-                    id="pform-unit"
-                    className="pform__input"
-                    type="text"
-                    list="pform-unit-options"
-                    placeholder="piece"
-                    value={unit}
-                    onChange={(e) => setUnit(e.target.value)}
-                    maxLength={20}
-                  />
+                  <label className="pform__label" htmlFor="pform-unit">{t("owner.product.unitLabel")}</label>
+                  <input id="pform-unit" className="pform__input" type="text" list="pform-unit-options"
+                    placeholder="piece" value={unit} onChange={(e) => setUnit(e.target.value)} maxLength={20} />
                   <datalist id="pform-unit-options">
-                    <option value="piece" />
-                    <option value="pack" />
-                    <option value="kg" />
-                    <option value="g" />
-                    <option value="liter" />
-                    <option value="ml" />
-                    <option value="box" />
-                    <option value="sack" />
-                    <option value="bottle" />
+                    <option value="piece" /><option value="pack" /><option value="kg" />
+                    <option value="g" /><option value="liter" /><option value="ml" />
+                    <option value="box" /><option value="sack" /><option value="bottle" />
                   </datalist>
                 </div>
 
-                {/* ── SKU / Barcode (optional) ── */}
                 <div className="pform__field">
-                  <label className="pform__label" htmlFor="pform-sku">
-                    {t("owner.product.skuLabel")}
-                  </label>
-                  <input
-                    id="pform-sku"
-                    className="pform__input"
-                    type="text"
-                    placeholder={t("owner.product.skuPlaceholder")}
-                    value={sku}
-                    onChange={(e) => setSku(e.target.value)}
-                    maxLength={64}
-                  />
+                  <label className="pform__label" htmlFor="pform-sku">{t("owner.product.skuLabel")}</label>
+                  <input id="pform-sku" className="pform__input" type="text"
+                    placeholder={t("owner.product.skuPlaceholder")} value={sku}
+                    onChange={(e) => setSku(e.target.value)} maxLength={64} />
                 </div>
 
-                {/* ── Description (optional) ── */}
                 <div className="pform__field">
-                  <label className="pform__label" htmlFor="pform-description">
-                    {t("owner.product.descriptionLabel")}
-                  </label>
-                  <textarea
-                    id="pform-description"
-                    className="pform__input"
+                  <label className="pform__label" htmlFor="pform-description">{t("owner.product.descriptionLabel")}</label>
+                  <textarea id="pform-description" className="pform__input"
                     style={{ minHeight: 72, resize: "vertical", fontFamily: "inherit" }}
-                    placeholder={t("owner.product.descriptionPlaceholder")}
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                    maxLength={500}
-                  />
+                    placeholder={t("owner.product.descriptionPlaceholder")} value={description}
+                    onChange={(e) => setDescription(e.target.value)} maxLength={500} />
                   <span className="pform__char-count">{description.length}/500</span>
                 </div>
 
-                {/* ── Status ── */}
-                <div className="pform__field">
-                  <label className="pform__label">
-                    {t("owner.product.statusLabel")} <span className="pform__required">*</span>
-                  </label>
-                  <div className="status-radio-group">
-                    {STATUS_OPTIONS.map(({ value, Icon, color, bg, border }) => {
-                      const isSelected = status === value;
-                      return (
-                        <button
-                          key={value}
-                          type="button"
-                          role="radio"
-                          aria-checked={isSelected}
-                          className={`status-radio-tile ${isSelected ? "status-radio-tile--active" : ""}`}
-                          style={isSelected ? { background: bg, borderColor: border, color } : {}}
-                          onClick={() => setStatus(value)}
-                        >
-                          <Icon size={22} strokeWidth={isSelected ? 2.5 : 1.8} />
-                          <span>{t(`status.${value}`)}</span>
-                        </button>
-                      );
-                    })}
+                {/* ── Quantity + Low Stock Threshold — replaces manual status ── */}
+                <div style={{ display: "flex", gap: 12 }}>
+                  <div className="pform__field" style={{ flex: 1 }}>
+                    <label className="pform__label" htmlFor="pform-quantity">{t("owner.product.quantityLabel")}</label>
+                    <input id="pform-quantity" className="pform__input" type="number" inputMode="numeric"
+                      min="0" step="1" value={quantity} onChange={(e) => setQuantity(e.target.value)} />
+                  </div>
+                  <div className="pform__field" style={{ flex: 1 }}>
+                    <label className="pform__label" htmlFor="pform-threshold">{t("owner.product.thresholdLabel")}</label>
+                    <input id="pform-threshold" className="pform__input" type="number" inputMode="numeric"
+                      min="0" step="1" value={lowStockThreshold} onChange={(e) => setLowStockThreshold(e.target.value)} />
                   </div>
                 </div>
 
-                {/* ── Error message ── */}
+                {/* ── Live status preview (read-only) ── */}
+                <div className="pform__field">
+                  <label className="pform__label">{t("owner.product.resultingStatusLabel")}</label>
+                  <div style={{
+                    display: "inline-flex", alignItems: "center", gap: 8,
+                    padding: "8px 16px", borderRadius: "var(--radius-pill, 999px)",
+                    background: previewCfg.bg, border: `1.5px solid ${previewCfg.border}`,
+                    color: previewCfg.color, fontWeight: 700, fontSize: 14,
+                  }}>
+                    <previewCfg.Icon size={18} strokeWidth={2.2} />
+                    {t(`status.${previewStatus}`)}
+                  </div>
+                  <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 6 }}>
+                    {t("owner.product.resultingStatusHint")}
+                  </p>
+                </div>
+
                 {error && (
-                  <motion.p
-                    className="pform__error"
-                    initial={{ opacity: 0, y: -4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                  >
+                  <motion.p className="pform__error" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}>
                     ⚠️ {error}
                   </motion.p>
                 )}
 
-                {/* ── Submit button ── */}
-                <button
-                  type="submit"
-                  className="pform__submit"
-                  disabled={saving}
-                >
+                <button type="submit" className="pform__submit" disabled={saving}>
                   {saving ? (
                     <>
-                      <span
-                        className="map-loading-spinner"
-                        style={{ width: 18, height: 18, borderWidth: 2, borderTopColor: "#fff" }}
-                      />
+                      <span className="map-loading-spinner" style={{ width: 18, height: 18, borderWidth: 2, borderTopColor: "#fff" }} />
                       {t("owner.product.saving")}
                     </>
                   ) : isEditMode ? (
-                    <>
-                      <Save size={18} />
-                      {t("owner.product.saveChanges")}
-                    </>
+                    <><Save size={18} /> {t("owner.product.saveChanges")}</>
                   ) : (
-                    <>
-                      <Plus size={18} />
-                      {t("owner.product.addProduct")}
-                    </>
+                    <><Plus size={18} /> {t("owner.product.addProduct")}</>
                   )}
                 </button>
 
