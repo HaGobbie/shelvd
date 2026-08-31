@@ -37,14 +37,18 @@ import {
   ChevronDown,
   X,
   UploadCloud,
+  ShoppingCart,
+  FileDown,
 } from "lucide-react";
 import { supabase } from "../config/supabaseClient";
-import { useMyStores, useOwnerInventory, deleteStore, formatLastUpdated, formatPrice } from "../hooks/useStores";
+import { useMyStores, useOwnerInventory, deleteStore, formatLastUpdated, formatPrice, fetchDailyTransactions, fetchMonthlyRevenue } from "../hooks/useStores";
 import ProductFormModal from "../components/ProductFormModal";
 import ConfirmDeleteModal from "../components/ConfirmDeleteModal";
 import StoreRegistrationForm from "../components/StoreRegistrationForm";
 import StoreEditModal from "../components/StoreEditModal";
 import BulkImportModal from "../components/BulkImportModal";
+import SellModal from "../components/SellModal";
+import { exportCurrentInventoryCSV, exportDailyTransactionsCSV, exportMonthlyRevenueCSV } from "../utils/csvExport";
 import { useLanguage } from "../i18n/LanguageContext";
 
 // Colors reference CSS custom properties rather than literal hex — see
@@ -132,7 +136,7 @@ function formatStockLine(quantity, unit, language) {
   return `${qty} ${displayUnit}`;
 }
 
-function ProductCard({ product, onQuantityChange, onEdit, onDelete }) {
+function ProductCard({ product, onQuantityChange, onEdit, onDelete, onSell }) {
   const { t, language } = useLanguage();
   const [expanded, setExpanded] = useState(false);
   const [localSaved, setLocalSaved] = useState(false);
@@ -168,6 +172,12 @@ function ProductCard({ product, onQuantityChange, onEdit, onDelete }) {
           </div>
         </button>
         <div className="product-card__actions">
+          <button type="button" className="product-card__action-btn"
+            onClick={() => onSell(product)} disabled={(product.quantity ?? 0) <= 0}
+            aria-label={`Sell ${product.name}`} title="Sell"
+            style={{ color: "var(--color-available)" }}>
+            <ShoppingCart size={15} strokeWidth={2} />
+          </button>
           <button type="button" className="product-card__action-btn product-card__action-btn--edit"
             onClick={() => onEdit(product)} aria-label={t("owner.dashboard.editAria", product.name)} title={t("owner.dashboard.edit")}>
             <Pencil size={15} strokeWidth={2} />
@@ -476,6 +486,9 @@ export default function OwnerDashboard({ session }) {
   const [deletingProduct, setDeletingProduct] = useState(null);
   const [storeEditOpen, setStoreEditOpen]     = useState(false);
   const [bulkImportOpen, setBulkImportOpen]   = useState(false);
+  const [sellModalOpen, setSellModalOpen]     = useState(false);
+  const [sellingProduct, setSellingProduct]   = useState(null);
+  const [reportBusy, setReportBusy]           = useState(false);
 
   const handleQuantityChange = async (productId, quantity) => {
     const { error } = await updateProductQuantity(productId, quantity);
@@ -485,6 +498,27 @@ export default function OwnerDashboard({ session }) {
   const openAddModal    = ()   => { setEditingProduct(null);    setFormModalOpen(true); };
   const openEditModal   = (p)  => { setEditingProduct(p);       setFormModalOpen(true); };
   const openDeleteModal = (p)  => { setDeletingProduct(p);      setDeleteModalOpen(true); };
+  const openSellModal   = (p)  => { setSellingProduct(p);       setSellModalOpen(true); };
+
+  const handleExportInventory = () => {
+    exportCurrentInventoryCSV(inventory, myStore?.name);
+  };
+
+  const handleExportDaily = async () => {
+    if (!myStore?.id) return;
+    setReportBusy(true);
+    const transactions = await fetchDailyTransactions(myStore.id);
+    exportDailyTransactionsCSV(transactions, myStore.name);
+    setReportBusy(false);
+  };
+
+  const handleExportMonthly = async () => {
+    if (!myStore?.id) return;
+    setReportBusy(true);
+    const monthly = await fetchMonthlyRevenue(myStore.id);
+    exportMonthlyRevenueCSV(monthly, myStore.name);
+    setReportBusy(false);
+  };
 
   const filteredInventory = filterQuery.trim()
     ? inventory.filter((p) =>
@@ -596,6 +630,48 @@ export default function OwnerDashboard({ session }) {
           </div>
         </div>
 
+        {/* Reports — CSV downloads, built entirely from data already
+            available (current inventory) or fetched fresh for the report
+            (daily transactions, monthly revenue). */}
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+          <button
+            type="button"
+            onClick={handleExportInventory}
+            disabled={inventory.length === 0}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 6, height: 36, padding: "0 12px",
+              borderRadius: "var(--radius-md, 8px)", fontSize: 12, fontWeight: 600,
+              background: "var(--color-surface-3)", color: "var(--color-text-secondary)", border: "none",
+            }}
+          >
+            <FileDown size={14} /> Inventory CSV
+          </button>
+          <button
+            type="button"
+            onClick={handleExportDaily}
+            disabled={reportBusy}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 6, height: 36, padding: "0 12px",
+              borderRadius: "var(--radius-md, 8px)", fontSize: 12, fontWeight: 600,
+              background: "var(--color-surface-3)", color: "var(--color-text-secondary)", border: "none",
+            }}
+          >
+            <FileDown size={14} /> Today's Transactions CSV
+          </button>
+          <button
+            type="button"
+            onClick={handleExportMonthly}
+            disabled={reportBusy}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 6, height: 36, padding: "0 12px",
+              borderRadius: "var(--radius-md, 8px)", fontSize: 12, fontWeight: 600,
+              background: "var(--color-surface-3)", color: "var(--color-text-secondary)", border: "none",
+            }}
+          >
+            <FileDown size={14} /> Monthly Revenue CSV
+          </button>
+        </div>
+
         {inventory.length > 4 && (
           <div className="dashboard-filter">
             <input type="search" className="dashboard-filter__input"
@@ -627,7 +703,7 @@ export default function OwnerDashboard({ session }) {
           <AnimatePresence>
             {filteredInventory.map((product) => (
               <ProductCard key={product.id} product={product}
-                onQuantityChange={handleQuantityChange} onEdit={openEditModal} onDelete={openDeleteModal} />
+                onQuantityChange={handleQuantityChange} onEdit={openEditModal} onDelete={openDeleteModal} onSell={openSellModal} />
             ))}
           </AnimatePresence>
         </div>
@@ -639,6 +715,11 @@ export default function OwnerDashboard({ session }) {
         storeId={myStore?.id} product={deletingProduct} />
       <StoreEditModal isOpen={storeEditOpen} onClose={() => setStoreEditOpen(false)} store={myStore} />
       <BulkImportModal isOpen={bulkImportOpen} onClose={() => setBulkImportOpen(false)} storeId={myStore?.id} />
+      <SellModal
+        isOpen={sellModalOpen}
+        onClose={() => setSellModalOpen(false)}
+        product={sellingProduct}
+      />
       <DeleteStoreConfirm
         isOpen={deleteStoreConfirmOpen}
         onClose={() => setDeleteStoreConfirmOpen(false)}

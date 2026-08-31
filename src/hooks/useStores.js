@@ -462,6 +462,108 @@ export async function nearbyStores(lat, lng, radiusMeters = 5000) {
   }));
 }
 
+// ─── Inventory transaction ledger ────────────────────────────────────────────
+//
+// recordSale() and recordStockAdjustment() call Postgres RPC functions
+// (see 18_inventory_transactions_ledger.sql) rather than doing the
+// inventory update + transaction insert as two separate client calls.
+// Two separate calls risk a partial failure (network drop between them)
+// or a lost-update race if two sales hit the same product at once — the
+// RPC wraps both writes in one atomic transaction, with a row lock
+// (`for update`) guarding against the race specifically.
+
+/**
+ * recordSale
+ * @param {string} productId
+ * @param {number} quantitySold — must be a positive integer, ≤ current stock
+ * @returns {Promise<{data: {new_quantity: number, earnings: number}[]|null, error: Error|null}>}
+ */
+export async function recordSale(productId, quantitySold) {
+  const { data, error } = await supabase.rpc("record_sale", {
+    p_product_id: productId,
+    p_quantity_sold: quantitySold,
+  });
+  return { data, error };
+}
+
+/**
+ * recordStockAdjustment
+ * Used by ProductFormModal's smart stock-edit flow: 'restocked' when the
+ * owner increases quantity, or 'spoiled'/'personal_use'/'other' when they
+ * decrease it (with an optional note). Never used for 'sold' — that's
+ * exclusively recordSale()'s job, since only a sale has real earnings.
+ *
+ * @param {string} productId
+ * @param {number} newQuantity
+ * @param {"spoiled"|"personal_use"|"other"|"restocked"} transactionType
+ * @param {string} [notes]
+ */
+export async function recordStockAdjustment(productId, newQuantity, transactionType, notes = null) {
+  const { data, error } = await supabase.rpc("record_stock_adjustment", {
+    p_product_id: productId,
+    p_new_quantity: newQuantity,
+    p_transaction_type: transactionType,
+    p_notes: notes,
+  });
+  return { data, error };
+}
+
+/**
+ * fetchDailyTransactions
+ * All of today's transactions for a store (owner's local "today" — the
+ * boundary is computed client-side from the browser's clock, then sent
+ * as an ISO timestamp, since a store owner cares about "today" in their
+ * own timezone, not the server's).
+ *
+ * @param {string} storeId
+ */
+export async function fetchDailyTransactions(storeId) {
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+
+  const { data, error } = await supabase
+    .from("inventory_transactions")
+    .select("id, product_id, quantity_changed, transaction_type, earnings, notes, created_at, inventory(name)")
+    .eq("store_id", storeId)
+    .gte("created_at", startOfToday.toISOString())
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    console.error("fetchDailyTransactions failed:", error);
+    return [];
+  }
+  return (data ?? []).map((row) => ({
+    id: row.id,
+    productId: row.product_id,
+    productName: row.inventory?.name ?? "(deleted product)",
+    quantityChanged: row.quantity_changed,
+    transactionType: row.transaction_type,
+    earnings: row.earnings,
+    notes: row.notes,
+    createdAt: row.created_at,
+  }));
+}
+
+/**
+ * fetchMonthlyRevenue
+ * Calls the monthly_revenue_report() RPC — aggregation happens in
+ * Postgres, not by pulling every transaction row into the browser.
+ *
+ * @param {string} storeId
+ */
+export async function fetchMonthlyRevenue(storeId) {
+  const { data, error } = await supabase.rpc("monthly_revenue_report", { p_store_id: storeId });
+  if (error) {
+    console.error("fetchMonthlyRevenue failed:", error);
+    return [];
+  }
+  return (data ?? []).map((row) => ({
+    month: row.month,
+    totalEarnings: row.total_earnings,
+    unitsSold: row.units_sold,
+  }));
+}
+
 export function useDebouncedSearchMatches(searchQuery, debounceMs = 300) {
   const [matches, setMatches] = useState(new Map());
   const [searching, setSearching] = useState(false);
