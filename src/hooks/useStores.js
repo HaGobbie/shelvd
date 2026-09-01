@@ -392,33 +392,17 @@ export function useOwnerInventory(storeId) {
     };
   }, [storeId]);
 
-  /**
-   * updateProductQuantity
-   * REPLACES the old updateProductStatus() — status is no longer directly
-   * settable. Updates quantity (and optionally low_stock_threshold); the
-   * DB trigger derives status the instant this UPDATE lands.
-   *
-   * @param {string} productId
-   * @param {number} quantity
-   * @param {number} [lowStockThreshold] — omit to leave threshold unchanged
-   */
-  const updateProductQuantity = useCallback(async (productId, quantity, lowStockThreshold) => {
-    if (!Number.isFinite(quantity) || quantity < 0) {
-      console.error(`Invalid quantity "${quantity}" — must be a non-negative number.`);
-      return { error: new Error("invalid quantity") };
-    }
-    const patch = { quantity: Math.floor(quantity) };
-    if (lowStockThreshold !== undefined) {
-      if (!Number.isFinite(lowStockThreshold) || lowStockThreshold < 0) {
-        console.error(`Invalid low_stock_threshold "${lowStockThreshold}" — must be a non-negative number.`);
-        return { error: new Error("invalid low_stock_threshold") };
-      }
-      patch.low_stock_threshold = Math.floor(lowStockThreshold);
-    }
-    return supabase.from("inventory").update(patch).eq("id", productId);
-  }, []);
+  // NOTE: there is deliberately NO plain "updateProductQuantity" helper
+  // here anymore. One used to exist as a direct `.update({quantity})`
+  // call with no ledger entry — it was the actual cause of a real bug,
+  // where the dashboard's quick +/- stepper silently changed stock with
+  // no transaction logged and no reason prompt for decreases. Every
+  // quantity change must now go through recordSale(),
+  // recordStockAdjustment(), or recordMultiSale() (all above), each of
+  // which both updates inventory AND logs the ledger entry atomically.
+  // Do not reintroduce a bare quantity-update path here.
 
-  return { inventory, loading, updateProductQuantity };
+  return { inventory, loading };
 }
 
 // ─── One-shot server-side helpers (RPCs) ────────────────────────────────────
@@ -487,6 +471,30 @@ export async function recordSale(productId, quantitySold) {
 }
 
 /**
+ * recordMultiSale
+ * Backs the multi-item Transaction modal — a single call for the whole
+ * cart of {productId, quantity} lines, processed atomically by
+ * record_multi_sale() (see 20_record_multi_sale.sql): if any line item
+ * fails (e.g. insufficient stock), NONE of them are applied, rather than
+ * leaving a transaction half-sold with no clean way to explain that to
+ * the owner.
+ *
+ * @param {Array<{productId: string, quantity: number}>} lineItems
+ * @param {string} [notes] — one shared note for the whole transaction
+ */
+export async function recordMultiSale(lineItems, notes = null) {
+  const payload = lineItems.map((item) => ({
+    product_id: item.productId,
+    quantity: item.quantity,
+  }));
+  const { data, error } = await supabase.rpc("record_multi_sale", {
+    p_line_items: payload,
+    p_notes: notes,
+  });
+  return { data, error };
+}
+
+/**
  * recordStockAdjustment
  * Used by ProductFormModal's smart stock-edit flow: 'restocked' when the
  * owner increases quantity, or 'spoiled'/'personal_use'/'other' when they
@@ -510,22 +518,27 @@ export async function recordStockAdjustment(productId, newQuantity, transactionT
 
 /**
  * fetchDailyTransactions
- * All of today's transactions for a store (owner's local "today" — the
- * boundary is computed client-side from the browser's clock, then sent
- * as an ISO timestamp, since a store owner cares about "today" in their
- * own timezone, not the server's).
+ * All transactions for a store on a given day (owner's local day — the
+ * boundary is computed client-side from the browser's clock, since a
+ * store owner cares about "today" in their own timezone, not the
+ * server's). Defaults to today, but now accepts any date, since the
+ * report viewer lets the owner pick a different day to look back at.
  *
  * @param {string} storeId
+ * @param {Date} [date] — defaults to today
  */
-export async function fetchDailyTransactions(storeId) {
-  const startOfToday = new Date();
-  startOfToday.setHours(0, 0, 0, 0);
+export async function fetchDailyTransactions(storeId, date = new Date()) {
+  const startOfDay = new Date(date);
+  startOfDay.setHours(0, 0, 0, 0);
+  const endOfDay = new Date(date);
+  endOfDay.setHours(23, 59, 59, 999);
 
   const { data, error } = await supabase
     .from("inventory_transactions")
     .select("id, product_id, quantity_changed, transaction_type, earnings, notes, created_at, inventory(name)")
     .eq("store_id", storeId)
-    .gte("created_at", startOfToday.toISOString())
+    .gte("created_at", startOfDay.toISOString())
+    .lte("created_at", endOfDay.toISOString())
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -543,6 +556,7 @@ export async function fetchDailyTransactions(storeId) {
     createdAt: row.created_at,
   }));
 }
+
 
 /**
  * fetchMonthlyRevenue

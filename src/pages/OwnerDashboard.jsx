@@ -41,14 +41,16 @@ import {
   FileDown,
 } from "lucide-react";
 import { supabase } from "../config/supabaseClient";
-import { useMyStores, useOwnerInventory, deleteStore, formatLastUpdated, formatPrice, fetchDailyTransactions, fetchMonthlyRevenue } from "../hooks/useStores";
+import { useMyStores, useOwnerInventory, deleteStore, formatLastUpdated, formatPrice, recordStockAdjustment } from "../hooks/useStores";
 import ProductFormModal from "../components/ProductFormModal";
 import ConfirmDeleteModal from "../components/ConfirmDeleteModal";
 import StoreRegistrationForm from "../components/StoreRegistrationForm";
 import StoreEditModal from "../components/StoreEditModal";
 import BulkImportModal from "../components/BulkImportModal";
-import SellModal from "../components/SellModal";
-import { exportCurrentInventoryCSV, exportDailyTransactionsCSV, exportMonthlyRevenueCSV } from "../utils/csvExport";
+import NewTransactionModal from "../components/NewTransactionModal";
+import DailyTransactionsModal from "../components/DailyTransactionsModal";
+import MonthlyRevenueModal from "../components/MonthlyRevenueModal";
+import { exportCurrentInventoryCSV } from "../utils/csvExport";
 import { useLanguage } from "../i18n/LanguageContext";
 
 // Colors reference CSS custom properties rather than literal hex — see
@@ -64,30 +66,86 @@ const STATUS_CONFIG = {
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
+// Options for "why did stock go down" — same three reasons as
+// ProductFormModal's decrease prompt, duplicated here rather than
+// imported since it's a 3-item array, not worth a shared module for.
+const DECREASE_REASONS = [
+  { value: "spoiled", label: "Spoiled" },
+  { value: "personal_use", label: "Personal Use" },
+  { value: "other", label: "Other" },
+];
+
 /**
  * QuantityStepper
- * Replaces the old manual status radio group. Adjusting quantity here
- * writes directly to the DB via updateProductQuantity() — the
- * sync_status_from_quantity() trigger derives status the instant this
- * lands, so there's no separate "now set the status" step anymore.
+ * Every quantity change here goes through the ledger — this was NOT
+ * always true: a bug had this component calling a plain
+ * `.update({quantity})` with no transaction logged and no reason asked
+ * for decreases. Fixed by requiring `onChange` to always receive a
+ * transaction type: '+' commits immediately as 'restocked'; '-' shows an
+ * inline reason picker FIRST and only commits once one is chosen.
  */
 function QuantityStepper({ product, onChange }) {
   const { t } = useLanguage();
   const [pending, setPending] = useState(false);
+  const [pickingReason, setPickingReason] = useState(false);
 
-  const adjust = async (delta) => {
-    const next = Math.max(0, (product.quantity ?? 0) + delta);
-    if (next === product.quantity) return;
+  const commitIncrease = async () => {
     setPending(true);
-    await onChange(product.id, next);
+    await onChange(product.id, (product.quantity ?? 0) + 1, "restocked", null);
     setPending(false);
   };
+
+  const commitDecrease = async (reason) => {
+    setPending(true);
+    setPickingReason(false);
+    await onChange(product.id, Math.max(0, (product.quantity ?? 0) - 1), reason, null);
+    setPending(false);
+  };
+
+  if (pickingReason) {
+    return (
+      <div style={{ marginTop: 8 }}>
+        <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 6 }}>
+          Why is stock going down?
+        </p>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {DECREASE_REASONS.map(({ value, label }) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => commitDecrease(value)}
+              disabled={pending}
+              style={{
+                padding: "6px 12px", borderRadius: "var(--radius-pill, 999px)",
+                border: "1px solid var(--color-border)", background: "var(--color-surface)",
+                fontSize: 12, fontWeight: 600, cursor: "pointer",
+              }}
+            >
+              {label}
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={() => setPickingReason(false)}
+            disabled={pending}
+            style={{
+              padding: "6px 12px", borderRadius: "var(--radius-pill, 999px)",
+              border: "none", background: "none",
+              fontSize: 12, fontWeight: 600, color: "var(--color-text-muted)", cursor: "pointer",
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 8 }}>
       <button
         type="button"
-        onClick={() => adjust(-1)}
+        onClick={() => setPickingReason(true)}
         disabled={pending || (product.quantity ?? 0) <= 0}
         aria-label={t("owner.dashboard.quickAdjustAria")}
         style={{
@@ -103,7 +161,7 @@ function QuantityStepper({ product, onChange }) {
       </span>
       <button
         type="button"
-        onClick={() => adjust(1)}
+        onClick={commitIncrease}
         disabled={pending}
         aria-label={t("owner.dashboard.quickAdjustAria")}
         style={{
@@ -136,14 +194,14 @@ function formatStockLine(quantity, unit, language) {
   return `${qty} ${displayUnit}`;
 }
 
-function ProductCard({ product, onQuantityChange, onEdit, onDelete, onSell }) {
+function ProductCard({ product, onQuantityChange, onEdit, onDelete }) {
   const { t, language } = useLanguage();
   const [expanded, setExpanded] = useState(false);
   const [localSaved, setLocalSaved] = useState(false);
   const cfg = STATUS_CONFIG[product.status] ?? STATUS_CONFIG.available;
 
-  const handleQuantityChange = async (pid, newQuantity) => {
-    await onQuantityChange(pid, newQuantity);
+  const handleQuantityChange = async (pid, newQuantity, transactionType, notes) => {
+    await onQuantityChange(pid, newQuantity, transactionType, notes);
     setLocalSaved(true);
     setTimeout(() => setLocalSaved(false), 1800);
   };
@@ -172,12 +230,6 @@ function ProductCard({ product, onQuantityChange, onEdit, onDelete, onSell }) {
           </div>
         </button>
         <div className="product-card__actions">
-          <button type="button" className="product-card__action-btn"
-            onClick={() => onSell(product)} disabled={(product.quantity ?? 0) <= 0}
-            aria-label={`Sell ${product.name}`} title="Sell"
-            style={{ color: "var(--color-available)" }}>
-            <ShoppingCart size={15} strokeWidth={2} />
-          </button>
           <button type="button" className="product-card__action-btn product-card__action-btn--edit"
             onClick={() => onEdit(product)} aria-label={t("owner.dashboard.editAria", product.name)} title={t("owner.dashboard.edit")}>
             <Pencil size={15} strokeWidth={2} />
@@ -193,19 +245,33 @@ function ProductCard({ product, onQuantityChange, onEdit, onDelete, onSell }) {
           <motion.div className="product-card__body"
             initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.22 }}>
-            <div className="product-card__timestamp">
-              <Clock size={12} />&nbsp;{formatLastUpdated(product.lastUpdated)}
-            </div>
-            {product.sku && (
-              <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 4 }}>
-                SKU: {product.sku}
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 4 }}>
+              <div className="product-card__timestamp">
+                <Clock size={12} />&nbsp;{formatLastUpdated(product.lastUpdated)}
               </div>
-            )}
-            {product.description && (
-              <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 4, lineHeight: 1.5 }}>
-                {product.description}
-              </p>
-            )}
+              {product.sku && (
+                <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
+                  SKU: {product.sku}
+                </div>
+              )}
+              {product.description && (
+                <p
+                  style={{
+                    fontSize: 13,
+                    color: "var(--color-text-secondary)",
+                    lineHeight: 1.6,
+                    margin: 0,
+                    padding: "8px 10px",
+                    background: "var(--color-surface-3)",
+                    borderRadius: 8,
+                    borderLeft: "3px solid var(--color-border)",
+                    wordBreak: "break-word",
+                  }}
+                >
+                  {product.description}
+                </p>
+              )}
+            </div>
             <QuantityStepper product={product} onChange={handleQuantityChange} />
           </motion.div>
         )}
@@ -477,7 +543,7 @@ export default function OwnerDashboard({ session }) {
 
   const myStore = stores.find((s) => s.id === selectedStoreId) ?? null;
 
-  const { inventory, updateProductQuantity } = useOwnerInventory(myStore?.id ?? null);
+  const { inventory } = useOwnerInventory(myStore?.id ?? null);
 
   const [filterQuery, setFilterQuery]         = useState("");
   const [formModalOpen, setFormModalOpen]     = useState(false);
@@ -486,38 +552,21 @@ export default function OwnerDashboard({ session }) {
   const [deletingProduct, setDeletingProduct] = useState(null);
   const [storeEditOpen, setStoreEditOpen]     = useState(false);
   const [bulkImportOpen, setBulkImportOpen]   = useState(false);
-  const [sellModalOpen, setSellModalOpen]     = useState(false);
-  const [sellingProduct, setSellingProduct]   = useState(null);
-  const [reportBusy, setReportBusy]           = useState(false);
+  const [newTransactionOpen, setNewTransactionOpen] = useState(false);
+  const [dailyModalOpen, setDailyModalOpen]   = useState(false);
+  const [monthlyModalOpen, setMonthlyModalOpen] = useState(false);
 
-  const handleQuantityChange = async (productId, quantity) => {
-    const { error } = await updateProductQuantity(productId, quantity);
+  const handleQuantityChange = async (productId, quantity, transactionType, notes = null) => {
+    const { error } = await recordStockAdjustment(productId, quantity, transactionType, notes);
     if (error) console.error("Quantity update failed:", error);
   };
 
   const openAddModal    = ()   => { setEditingProduct(null);    setFormModalOpen(true); };
   const openEditModal   = (p)  => { setEditingProduct(p);       setFormModalOpen(true); };
   const openDeleteModal = (p)  => { setDeletingProduct(p);      setDeleteModalOpen(true); };
-  const openSellModal   = (p)  => { setSellingProduct(p);       setSellModalOpen(true); };
 
   const handleExportInventory = () => {
     exportCurrentInventoryCSV(inventory, myStore?.name);
-  };
-
-  const handleExportDaily = async () => {
-    if (!myStore?.id) return;
-    setReportBusy(true);
-    const transactions = await fetchDailyTransactions(myStore.id);
-    exportDailyTransactionsCSV(transactions, myStore.name);
-    setReportBusy(false);
-  };
-
-  const handleExportMonthly = async () => {
-    if (!myStore?.id) return;
-    setReportBusy(true);
-    const monthly = await fetchMonthlyRevenue(myStore.id);
-    exportMonthlyRevenueCSV(monthly, myStore.name);
-    setReportBusy(false);
   };
 
   const filteredInventory = filterQuery.trim()
@@ -624,15 +673,30 @@ export default function OwnerDashboard({ session }) {
               <UploadCloud size={16} strokeWidth={2} />
               <span>{t("owner.dashboard.bulkImportCsv")}</span>
             </button>
+            <button
+              type="button"
+              onClick={() => setNewTransactionOpen(true)}
+              disabled={inventory.length === 0}
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 6, height: 44, padding: "0 16px",
+                borderRadius: "var(--radius-pill, 999px)", fontSize: 13, fontWeight: 700,
+                fontFamily: "var(--font-heading, inherit)", whiteSpace: "nowrap",
+                background: "var(--color-available)", color: "#fff", border: "none",
+              }}
+            >
+              <ShoppingCart size={16} strokeWidth={2} />
+              <span>New Transaction</span>
+            </button>
             <button type="button" className="dashboard-add-btn" onClick={openAddModal}>
               <Plus size={18} strokeWidth={2.5} /> {t("owner.dashboard.addProduct")}
             </button>
           </div>
         </div>
 
-        {/* Reports — CSV downloads, built entirely from data already
-            available (current inventory) or fetched fresh for the report
-            (daily transactions, monthly revenue). */}
+        {/* Reports — each opens a viewer modal (date/month picker + a
+            list of entries), with CSV export available from inside that
+            modal, rather than downloading blind with no way to preview
+            or pick a different day/month first. */}
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
           <button
             type="button"
@@ -648,27 +712,25 @@ export default function OwnerDashboard({ session }) {
           </button>
           <button
             type="button"
-            onClick={handleExportDaily}
-            disabled={reportBusy}
+            onClick={() => setDailyModalOpen(true)}
             style={{
               display: "inline-flex", alignItems: "center", gap: 6, height: 36, padding: "0 12px",
               borderRadius: "var(--radius-md, 8px)", fontSize: 12, fontWeight: 600,
               background: "var(--color-surface-3)", color: "var(--color-text-secondary)", border: "none",
             }}
           >
-            <FileDown size={14} /> Today's Transactions CSV
+            <FileDown size={14} /> Today's Transactions
           </button>
           <button
             type="button"
-            onClick={handleExportMonthly}
-            disabled={reportBusy}
+            onClick={() => setMonthlyModalOpen(true)}
             style={{
               display: "inline-flex", alignItems: "center", gap: 6, height: 36, padding: "0 12px",
               borderRadius: "var(--radius-md, 8px)", fontSize: 12, fontWeight: 600,
               background: "var(--color-surface-3)", color: "var(--color-text-secondary)", border: "none",
             }}
           >
-            <FileDown size={14} /> Monthly Revenue CSV
+            <FileDown size={14} /> Monthly Revenue
           </button>
         </div>
 
@@ -703,7 +765,7 @@ export default function OwnerDashboard({ session }) {
           <AnimatePresence>
             {filteredInventory.map((product) => (
               <ProductCard key={product.id} product={product}
-                onQuantityChange={handleQuantityChange} onEdit={openEditModal} onDelete={openDeleteModal} onSell={openSellModal} />
+                onQuantityChange={handleQuantityChange} onEdit={openEditModal} onDelete={openDeleteModal} />
             ))}
           </AnimatePresence>
         </div>
@@ -715,10 +777,22 @@ export default function OwnerDashboard({ session }) {
         storeId={myStore?.id} product={deletingProduct} />
       <StoreEditModal isOpen={storeEditOpen} onClose={() => setStoreEditOpen(false)} store={myStore} />
       <BulkImportModal isOpen={bulkImportOpen} onClose={() => setBulkImportOpen(false)} storeId={myStore?.id} />
-      <SellModal
-        isOpen={sellModalOpen}
-        onClose={() => setSellModalOpen(false)}
-        product={sellingProduct}
+      <NewTransactionModal
+        isOpen={newTransactionOpen}
+        onClose={() => setNewTransactionOpen(false)}
+        inventory={inventory}
+      />
+      <DailyTransactionsModal
+        isOpen={dailyModalOpen}
+        onClose={() => setDailyModalOpen(false)}
+        storeId={myStore?.id}
+        storeName={myStore?.name}
+      />
+      <MonthlyRevenueModal
+        isOpen={monthlyModalOpen}
+        onClose={() => setMonthlyModalOpen(false)}
+        storeId={myStore?.id}
+        storeName={myStore?.name}
       />
       <DeleteStoreConfirm
         isOpen={deleteStoreConfirmOpen}
