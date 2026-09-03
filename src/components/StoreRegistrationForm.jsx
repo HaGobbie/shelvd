@@ -37,6 +37,8 @@ import {
 } from "lucide-react";
 import { supabase } from "../config/supabaseClient";
 import { useLanguage } from "../i18n/LanguageContext";
+import { useTheme } from "../theme/ThemeContext";
+import { getTileUrl, TILE_ATTRIBUTION } from "../config/mapTiles";
 
 // ─── Fix Leaflet default icon path (Vite bundler issue) ──────────────────────
 delete L.Icon.Default.prototype._getIconUrl;
@@ -218,7 +220,7 @@ function StepStoreDetails({ data, onChange, errors, t }) {
 }
 
 /** Step 2 — GIS location with Nominatim geocoding + draggable pin */
-function StepGISLocation({ data, onChange, errors, t }) {
+function StepGISLocation({ data, onChange, errors, t, theme }) {
   const [searchQuery, setSearchQuery] = useState(data.address || "");
   const [geocoding, setGeocoding] = useState(false);
   const [geocodeError, setGeocodeError] = useState("");
@@ -335,7 +337,8 @@ function StepGISLocation({ data, onChange, errors, t }) {
           attributionControl={false}
         >
           <TileLayer
-            url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+            key={theme}
+            url={getTileUrl(theme)}
             attribution=""
             subdomains="abcd"
             maxZoom={20}
@@ -385,7 +388,7 @@ function StepGISLocation({ data, onChange, errors, t }) {
 }
 
 /** Step 3 — Review summary before final submit */
-function StepReview({ data, t }) {
+function StepReview({ data, t, theme }) {
   const hasCoords = data.lat !== null && data.lng !== null;
 
   const rows = [
@@ -427,7 +430,8 @@ function StepReview({ data, t }) {
             doubleClickZoom={false}
           >
             <TileLayer
-              url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+              key={theme}
+              url={getTileUrl(theme)}
               subdomains="abcd"
               maxZoom={20}
             />
@@ -470,6 +474,7 @@ const INITIAL_DATA = {
  */
 export default function StoreRegistrationForm({ user, onComplete, onCancel }) {
   const { t } = useLanguage();
+  const { theme } = useTheme();
 
   // Defined inside the component so labels react to language changes
   const STEPS = [
@@ -640,10 +645,10 @@ export default function StoreRegistrationForm({ user, onComplete, onCancel }) {
               <StepStoreDetails data={data} onChange={onChange} errors={errors} t={t} />
             )}
             {step === 2 && (
-              <StepGISLocation data={data} onChange={onChange} errors={errors} t={t} />
+              <StepGISLocation data={data} onChange={onChange} errors={errors} t={t} theme={theme} />
             )}
             {step === 3 && (
-              <StepReview data={data} t={t} />
+              <StepReview data={data} t={t} theme={theme} />
             )}
           </motion.div>
         </AnimatePresence>

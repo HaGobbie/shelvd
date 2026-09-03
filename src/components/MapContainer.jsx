@@ -1,7 +1,8 @@
 // src/components/MapContainer.jsx
 // Main Leaflet map. Centered on Catalunan Grande, Davao City.
 // Uses Canvas rendering for optimal performance with many pins.
-// Tile source: CartoDB Positron (clean, light, reads well on mobile).
+// Tile source: CARTO (Positron/light or Dark Matter/dark, switching with
+// the app's theme — see src/config/mapTiles.js).
 //
 // ARCHITECTURE NOTE (post-Supabase-migration):
 // This component used to derive each pin's color by scanning the full
@@ -31,6 +32,8 @@ import { LocateFixed, Loader2 } from "lucide-react";
 import StoreMarker from "./StoreMarker";
 import { useGeolocation } from "../hooks/useGeolocation";
 import { useLanguage } from "../i18n/LanguageContext";
+import { useTheme } from "../theme/ThemeContext";
+import { getTileUrl, TILE_ATTRIBUTION } from "../config/mapTiles";
 
 // ─── Fix Leaflet's default icon path issue with Vite bundlers ─────────────────
 delete L.Icon.Default.prototype._getIconUrl;
@@ -112,10 +115,7 @@ function UserLocationMarker({ position, label }) {
 
 /**
  * Flies the map to `position` whenever it changes — fires on initial
- * geolocation success AND every subsequent explicit "locate me" tap
- * (position only ever changes via those two paths, both of which the
- * person clearly wants centered on-screen, so re-flying every time is
- * the right call here, not a nuisance).
+ * geolocation success AND every subsequent explicit "locate me" tap.
  */
 function FlyToPosition({ position }) {
   const map = useMap();
@@ -140,8 +140,6 @@ function FlyToPosition({ position }) {
 /**
  * MapContainer
  * Renders the full-bleed Leaflet map with all store pins.
- * When `searchQuery` is active, pins reflect the matched product status
- * from `searchMatches` (server-computed) rather than client-side inventory.
  *
  * @param {MapContainerProps} props
  */
@@ -156,14 +154,9 @@ export default function MapContainer({
 }) {
   const searchActive = searchQuery.trim().length > 0;
   const { t } = useLanguage();
+  const { theme } = useTheme();
   const { position: userPosition, status: geoStatus, requestLocation } = useGeolocation();
 
-  // Derive display data per marker from the current search matches.
-  // IMPORTANT: pins are neutral (no status color) when no search is
-  // active — they only take on traffic-light coloring once the person is
-  // actually searching for a product, matching what a status color is
-  // meant to communicate ("this store has/doesn't have what you searched
-  // for"), not a constant ambient judgment on every store's overall stock.
   const markerDisplayData = useMemo(() => {
     return markers.map((marker) => {
       if (!searchActive) {
@@ -184,8 +177,12 @@ export default function MapContainer({
     });
   }, [markers, searchActive, searchMatches]);
 
-  // Leaflet canvas renderer for performance
   const canvasRenderer = useMemo(() => L.canvas({ padding: 0.5 }), []);
+
+  // Tile URL depends on the current theme — re-derived whenever theme
+  // changes, so toggling dark/light mode swaps the actual map tiles too,
+  // not just the surrounding UI chrome.
+  const tileUrl = useMemo(() => getTileUrl(theme), [theme]);
 
   return (
     <div className="map-wrapper">
@@ -196,9 +193,6 @@ export default function MapContainer({
         </div>
       )}
 
-      {/* Surface fetch/RLS/permission errors instead of silently showing
-          an empty map — this is what was missing when a "permission
-          denied" error from a missing GRANT went completely unnoticed. */}
       {!loading && error && (
         <div
           className="map-error-banner"
@@ -209,7 +203,7 @@ export default function MapContainer({
             left: "50%",
             transform: "translateX(-50%)",
             zIndex: 900,
-            background: "#E74C3C",
+            background: "var(--color-out)",
             color: "#fff",
             padding: "10px 16px",
             borderRadius: 8,
@@ -234,10 +228,13 @@ export default function MapContainer({
         zoomControl={false}
         attributionControl={true}
       >
-        {/* CartoDB Positron — clean, light, minimal visual noise */}
+        {/* CARTO — Positron (light) or Dark Matter (dark), matching the
+            app's current theme. Requires VITE_CARTO_API_KEY — see
+            src/config/mapTiles.js. */}
         <TileLayer
-          url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+          key={theme} /* force remount on theme change so the old tile layer doesn't linger */
+          url={tileUrl}
+          attribution={TILE_ATTRIBUTION}
           subdomains="abcd"
           maxZoom={20}
         />
@@ -260,12 +257,7 @@ export default function MapContainer({
         ))}
       </LeafletMap>
 
-      {/* "Locate me" crosshair control — re-triggers the geolocation
-          prompt for anyone who denied it initially (or wants to
-          re-center on a moved position). Positioned to sit just above
-          the Owner Dashboard FAB in App.jsx (bottom:24px, 52px tall),
-          not inside it — the two are separate components with no shared
-          layout parent, so this offset is manually kept clear of it. */}
+      {/* "Locate me" crosshair control */}
       <button
         type="button"
         onClick={requestLocation}
@@ -281,8 +273,8 @@ export default function MapContainer({
           width: 48,
           height: 48,
           borderRadius: "50%",
-          background: "#fff",
-          color: geoStatus === "denied" ? "#E74C3C" : "var(--color-brand-primary)",
+          background: "var(--color-surface)",
+          color: geoStatus === "denied" ? "var(--color-out)" : "var(--color-brand-primary)",
           border: "none",
           boxShadow: "var(--shadow-lg, 0 4px 16px rgba(0,0,0,0.2))",
           display: "flex",

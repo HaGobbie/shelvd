@@ -13,8 +13,8 @@
 //   2. OwnerDashboard can receive `session` as a prop and render instantly,
 //      instead of running its own separate getSession() round trip.
 
-import React, { useState, useEffect, useCallback } from "react";
-import { Store, Languages } from "lucide-react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import { Store, Languages, Sun, Moon } from "lucide-react";
 
 import MapContainer from "./components/MapContainer";
 import SearchBar from "./components/SearchBar";
@@ -23,6 +23,7 @@ import OwnerDashboard from "./pages/OwnerDashboard";
 import { useMapMarkers, useStoreDetails, useDebouncedSearchMatches } from "./hooks/useStores";
 import { supabase } from "./config/supabaseClient";
 import { LanguageProvider, useLanguage } from "./i18n/LanguageContext";
+import { ThemeProvider, useTheme } from "./theme/ThemeContext";
 
 import "./styles/App.css";
 
@@ -51,6 +52,23 @@ if (
   window.location.hash = "#" + window.location.hash.substring(tokenIndex);
 }
 
+// Captured ONCE, at module load — before Supabase-js's client gets a
+// chance to process (and likely clear/rewrite) the hash itself. This is
+// the fix for a real bug: the redirect-to-dashboard logic used to
+// re-check `window.location.hash` LIVE, at the moment a session
+// resolved. But Supabase-js's own OAuth handling clears the hash as part
+// of consuming it — so by the time our session callback fired, the hash
+// was often already empty, meaning the "was this an OAuth redirect"
+// check silently came back false even though it genuinely was one. That
+// produced exactly the reported symptom: sign-in appears to hang, an
+// error eventually shows, then landing on the public map instead of the
+// dashboard, requiring a second manual tap on the Store FAB even though
+// the session was actually already valid. Capturing this flag up front,
+// before anything has a chance to touch the hash, removes the race
+// entirely — the redirect decision no longer depends on the hash still
+// being intact later.
+const HAD_OAUTH_HASH_ON_LOAD = window.location.hash.includes("access_token");
+
 /**
  * Tiny hash-router — no external routing library needed for Phase A.
  * Returns [route, setRoute] rather than just `route`: the setter lets a
@@ -73,6 +91,7 @@ function useHashRoute() {
 function AppShell() {
   const [route, setRoute] = useHashRoute();
   const { language, setLanguage, t } = useLanguage();
+  const { theme, toggleTheme } = useTheme();
 
   // ─── Global Supabase auth session ────────────────────────────────────────
   const [session, setSession] = useState(null);
@@ -81,25 +100,30 @@ function AppShell() {
   // a session from it within a reasonable time — the actual gap this
   // whole block exists to close (see comment below).
   const [oauthStuckError, setOauthStuckError] = useState(null);
+  // Tracks whether we've ALREADY forced the #/dashboard redirect once for
+  // this OAuth flow — without this, a second onAuthStateChange event
+  // (e.g. a token refresh shortly after login) could theoretically
+  // re-trigger navigation logic. Using a ref rather than state since this
+  // doesn't need to cause a re-render.
+  const oauthHandledRef = useRef(false);
 
   /**
-   * If a session just came in AND the URL hash still holds the raw OAuth
-   * redirect payload (`#access_token=...`), rewrite the hash to a clean
-   * "#/dashboard" so the user lands somewhere meaningful instead of our
-   * router silently failing to match the token string and falling back
-   * to the public map.
+   * If a session just came in AND this page load genuinely started as an
+   * OAuth redirect (per the ref captured at module load, NOT a live
+   * re-check of the current hash — see HAD_OAUTH_HASH_ON_LOAD above),
+   * rewrite the hash to a clean "#/dashboard" so the user lands somewhere
+   * meaningful instead of our router silently failing to match the token
+   * string and falling back to the public map.
    *
    * We update BOTH window.location.hash (so the address bar is clean and
    * back/forward navigation behaves sanely) AND call setRoute directly
    * (so React's route state updates in the SAME render pass, rather than
-   * waiting for the native `hashchange` event to fire on its own — that
-   * event is dispatched as a separate task, which would otherwise cause
-   * one render where the token is already stripped from the hash but our
-   * route state hasn't caught up yet, flashing the public map first).
+   * waiting for the native `hashchange` event to fire on its own).
    */
   const redirectFromOAuthHashIfNeeded = useCallback(
     (currentSession) => {
-      if (currentSession && window.location.hash.includes("access_token")) {
+      if (currentSession && HAD_OAUTH_HASH_ON_LOAD && !oauthHandledRef.current) {
+        oauthHandledRef.current = true;
         window.location.hash = "/dashboard";
         setRoute("#/dashboard");
         setOauthStuckError(null);
@@ -111,21 +135,25 @@ function AppShell() {
   useEffect(() => {
     let isMounted = true;
 
-    // Safety valve: if the hash contains a token but we never end up with
-    // a session from it (Supabase rejected the redirect, a network hiccup,
-    // a misconfigured Redirect URL allowlist, etc.), the loading guard
-    // below would otherwise spin forever with zero visibility into why.
-    // This gives it a hard ceiling and turns silence into a visible,
-    // actionable error instead.
-    const stuckTimer = window.location.hash.includes("access_token")
+    // Safety valve: if the hash contained a token on load but we never
+    // end up with a session from it (Supabase rejected the redirect, a
+    // network hiccup, a misconfigured Redirect URL allowlist, etc.), the
+    // loading guard below would otherwise spin forever with zero
+    // visibility into why. This gives it a hard ceiling and turns
+    // silence into a visible, actionable error instead. 10s rather than
+    // the original 8s — a bit more headroom for slower connections, now
+    // that the actual race-condition bug above is fixed and this timer
+    // is back to being a genuine last-resort safety net rather than
+    // something firing on ordinary successful logins.
+    const stuckTimer = HAD_OAUTH_HASH_ON_LOAD
       ? window.setTimeout(() => {
-          if (isMounted) {
+          if (isMounted && !oauthHandledRef.current) {
             setOauthStuckError(
               "Sign-in is taking longer than expected. This can happen if the " +
                 "redirect URL isn't in Supabase's allowed Redirect URLs list."
             );
           }
-        }, 8000)
+        }, 10000)
       : null;
 
     // Resolve whatever session already exists (page load, refresh, or the
@@ -183,14 +211,12 @@ function AppShell() {
 
   const resultCount = searchQuery.trim() ? searchMatches.size : 0;
 
-  // ─── Guard: still resolving auth, or hash still holds a raw OAuth token ──
-  // Covers the brief window before redirectFromOAuthHashIfNeeded has run
-  // (e.g. auth is still loading on first paint) so we never flash the
-  // public map or a broken route mid-redirect. If oauthStuckError is set
-  // (see the timeout in the effect above), we break out of the spinner
-  // entirely and show something actionable instead of hanging forever.
-  const hashHasPendingOAuthToken = window.location.hash.includes("access_token");
-
+  // ─── Guard: still resolving auth, or this load started as an OAuth
+  // redirect we haven't finished handling yet ───────────────────────────────
+  // Uses the captured HAD_OAUTH_HASH_ON_LOAD flag (not a live hash
+  // re-check) for the same race-condition reason as the redirect logic
+  // above — the hash may already be gone by now even though this load
+  // genuinely started as an OAuth callback.
   if (oauthStuckError) {
     return (
       <div
@@ -226,7 +252,7 @@ function AppShell() {
     );
   }
 
-  if (authLoading || hashHasPendingOAuthToken) {
+  if (authLoading || (HAD_OAUTH_HASH_ON_LOAD && !oauthHandledRef.current)) {
     return (
       <div
         className="app-container"
@@ -364,10 +390,10 @@ function AppShell() {
           height: 40,
           padding: "0 14px",
           borderRadius: "var(--radius-pill, 999px)",
-          background: "#fff",
-          color: "var(--color-text-primary, #1a1a1a)",
+          background: "var(--color-surface)",
+          color: "var(--color-text-primary)",
           border: "none",
-          boxShadow: "var(--shadow-md, 0 2px 10px rgba(0,0,0,0.15))",
+          boxShadow: "var(--shadow-md)",
           fontSize: 13,
           fontWeight: 700,
           cursor: "pointer",
@@ -376,20 +402,51 @@ function AppShell() {
         <Languages size={16} strokeWidth={2.2} />
         {language === "en" ? "TL" : "EN"}
       </button>
+
+      {/* Dark/light toggle — stacked right below the language toggle,
+          same top-left corner, clear of everything else. */}
+      <button
+        type="button"
+        onClick={toggleTheme}
+        aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+        title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+        style={{
+          position: "fixed",
+          top: "calc(64px + env(safe-area-inset-top, 0px))",
+          left: 16,
+          zIndex: 800,
+          width: 40,
+          height: 40,
+          borderRadius: "50%",
+          background: "var(--color-surface)",
+          color: "var(--color-text-primary)",
+          border: "none",
+          boxShadow: "var(--shadow-md)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "pointer",
+        }}
+      >
+        {theme === "dark" ? <Sun size={16} strokeWidth={2.2} /> : <Moon size={16} strokeWidth={2.2} />}
+      </button>
     </div>
   );
 }
 
 /**
  * App
- * Wraps the actual app shell in LanguageProvider, so every descendant
- * (including MapContainer, SearchBar, StoreDetails) can call
- * useLanguage() to read/set the current language and translate strings.
+ * Wraps the actual app shell in LanguageProvider + ThemeProvider, so
+ * every descendant (including MapContainer, SearchBar, StoreDetails,
+ * OwnerDashboard) can call useLanguage()/useTheme() to read/set the
+ * current language/theme.
  */
 export default function App() {
   return (
-    <LanguageProvider>
-      <AppShell />
-    </LanguageProvider>
+    <ThemeProvider>
+      <LanguageProvider>
+        <AppShell />
+      </LanguageProvider>
+    </ThemeProvider>
   );
 }

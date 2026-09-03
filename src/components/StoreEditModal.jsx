@@ -38,6 +38,8 @@ import {
 } from "lucide-react";
 import { supabase } from "../config/supabaseClient";
 import { useLanguage } from "../i18n/LanguageContext";
+import { useTheme } from "../theme/ThemeContext";
+import { getTileUrl, TILE_ATTRIBUTION } from "../config/mapTiles";
 
 // ─── Leaflet icon fix ─────────────────────────────────────────────────────────
 delete L.Icon.Default.prototype._getIconUrl;
@@ -132,6 +134,7 @@ function ForceMapHeight({ height }) {
  */
 export default function StoreEditModal({ isOpen, onClose, store }) {
   const { t } = useLanguage();
+  const { theme } = useTheme();
 
   // Tabs defined inside the component so their labels react to language changes
   const TABS = [
@@ -472,7 +475,9 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
                       attributionControl={false}
                     >
                       <TileLayer
-                        url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+                        key={theme}
+                        url={getTileUrl(theme)}
+                        attribution={TILE_ATTRIBUTION}
                         subdomains="abcd"
                         maxZoom={20}
                       />

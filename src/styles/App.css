@@ -1,13 +1,12 @@
 /* src/styles/App.css */
 /* ─────────────────────────────────────────────────────────────────────────────
-   GIS Community Platform — Global Stylesheet
-   "Community-Centric Utility" aesthetic: clean, trustworthy, action-oriented.
-   Font: Roboto (body) + Roboto Condensed (headings/labels)
+   Shelvd — Global Stylesheet
+   "Modern Soft-Utility" aesthetic: warm, tactile, action-oriented.
+   Font: Plus Jakarta Sans / Inter (loaded via index.html's Google Fonts link)
    Mobile-First single-column layout.
    All interactive elements guaranteed ≥ 48 × 48 px touch target.
+   Supports light + dark themes via html[data-theme] — see section 1b.
    ───────────────────────────────────────────────────────────────────────────── */
-
-@import url("https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Condensed:wght@600;700&display=swap");
 
 /* ═══════════════════════════════════════════════════════════════════════════
    1. DESIGN TOKENS (CSS Custom Properties)
@@ -30,7 +29,10 @@
      Headers, the login screen, the map's outer letterboxing — anywhere
      that was previously using --color-brand-primary/-dark as a BACKGROUND
      rather than an accent. Two depths, matching the two-tier dark system
-     that already existed (header bars vs. full-page backgrounds). */
+     that already existed (header bars vs. full-page backgrounds). These
+     stay THE SAME across light/dark theme — they're already dark by
+     design in "light mode," so dark mode doesn't need to touch them; see
+     the dark theme block below for what actually changes. */
   --color-stone-dark: #292524;
   --color-stone-darker: #1c1917;
 
@@ -51,7 +53,7 @@
   --color-out-bg: rgba(220, 38, 38, 0.12);
   --color-out-border: rgba(220, 38, 38, 0.45);
 
-  /* ── Neutrals (warm stone family, replacing the old cool slate tones) ──── */
+  /* ── Neutrals (warm stone family) ──────────────────────────────────────── */
   --color-surface: #ffffff;
   --color-surface-2: #fafaf9;
   --color-surface-3: #f5f5f4;
@@ -59,6 +61,12 @@
   --color-text-primary: #1c1917;
   --color-text-secondary: #57534e;
   --color-text-muted: #a8a29e;
+
+  /* Semi-transparent overlay shown while the map is loading — kept as
+     its own token (not a literal rgba() on the rule itself) so dark mode
+     can swap it for a dark-tinted version instead of a jarring bright
+     flash over an otherwise dark theme. */
+  --color-loading-overlay: rgba(247, 249, 252, 0.9);
 
   /* ── Typography ──────────────────────────────────────────────────────────
      Plus Jakarta Sans / Inter — already loaded via the Google Fonts
@@ -91,8 +99,8 @@
   --radius-pill: 999px;
 
   /* Shadows — warm-toned (based on --color-stone-dark's RGB) rather than
-     the old cool slate-tinted shadow color, so shadows read consistently
-     with the rest of the warm palette instead of looking slightly blue. */
+     a cool slate-tinted shadow color, so shadows read consistently with
+     the rest of the warm palette instead of looking slightly blue. */
   --shadow-sm: 0 1px 4px rgba(41, 37, 36, 0.1);
   --shadow-md: 0 4px 16px rgba(41, 37, 36, 0.13);
   --shadow-lg: 0 8px 32px rgba(41, 37, 36, 0.18);
@@ -106,6 +114,67 @@
   --searchbar-top: 16px;
   --sheet-max-height: 82dvh;
   --sheet-border-radius: 20px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   1b. DARK THEME
+   Toggled by setting data-theme="dark" on <html> (see
+   src/theme/ThemeContext.jsx) — either from the person's explicit choice
+   via the toggle button, or auto-detected from the device's system
+   preference on first visit.
+
+   Uses html[data-theme="dark"] rather than a bare [data-theme="dark"]:
+   both that and :root match <html> with EQUAL specificity, so whichever
+   rule happened to appear later in the file would win regardless of
+   intent. html[data-theme="dark"] has strictly higher specificity than
+   :root, so it reliably overrides regardless of file order.
+
+   DESIGN NOTE: "light mode" here already uses dark stone backgrounds for
+   headers/login/app-container by design (a warm dark structural color,
+   not literal "light everything"). Dark mode doesn't invert those —
+   they already read as dark — it flips the CARD/CANVAS surfaces and
+   TEXT colors, which are the parts that are actually light today.
+   Status/brand colors get a one-shade brightness bump, standard
+   practice for contrast against dark surfaces.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+html[data-theme="dark"] {
+  /* Tells the browser to render native form controls (date/month
+     pickers, checkboxes, scrollbars) in dark styling automatically. */
+  color-scheme: dark;
+
+  --color-surface: #262220;
+  --color-surface-2: #1c1917;
+  --color-surface-3: #322d2b;
+  --color-border: #44403c;
+  --color-text-primary: #f5f5f4;
+  --color-text-secondary: #d6d3d1;
+  --color-text-muted: #a8a29e;
+
+  --color-loading-overlay: rgba(28, 25, 23, 0.88);
+
+  --color-available: #22c55e;
+  --color-available-bg: rgba(34, 197, 94, 0.18);
+  --color-available-border: rgba(34, 197, 94, 0.5);
+
+  --color-low: #f59e0b;
+  --color-low-bg: rgba(245, 158, 11, 0.18);
+  --color-low-border: rgba(245, 158, 11, 0.5);
+
+  --color-out: #f87171;
+  --color-out-bg: rgba(248, 113, 113, 0.18);
+  --color-out-border: rgba(248, 113, 113, 0.5);
+
+  --shadow-sm: 0 1px 4px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.55);
+
+  /* --color-brand-primary and --color-stone-dark/-darker are
+     deliberately NOT overridden — see the design note above. */
+}
+
+html[data-theme="light"] {
+  color-scheme: light;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -193,6 +262,15 @@ a {
   backdrop-filter: blur(4px);
 }
 
+html[data-theme="dark"] .leaflet-control-attribution {
+  background: rgba(28, 25, 23, 0.75) !important;
+  color: #f5f5f4 !important;
+}
+
+html[data-theme="dark"] .leaflet-control-attribution a {
+  color: #d97b4f !important;
+}
+
 /* ─── Loading overlay ───────────────────────────────────────────────────── */
 .map-loading-overlay {
   position: absolute;
@@ -203,7 +281,7 @@ a {
   align-items: center;
   justify-content: center;
   gap: var(--space-3);
-  background: rgba(247, 249, 252, 0.9);
+  background: var(--color-loading-overlay);
   backdrop-filter: blur(6px);
   color: var(--color-text-secondary);
   font-size: var(--text-sm);
@@ -1104,6 +1182,10 @@ a {
   width: 100%;
 }
 
+html[data-theme="dark"] .pform__select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23a8a29e' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+}
+
 .pform__select:focus {
   border-color: var(--color-brand-primary-light);
 }
@@ -1381,11 +1463,11 @@ a {
 
 /* Store error box */
 .dashboard-store-error {
-  background: #fff8f8;
+  background: var(--color-out-bg);
   border: 1.5px solid var(--color-out);
   border-radius: var(--radius-md);
   padding: var(--space-5);
-  color: #c0392b;
+  color: var(--color-out);
   font-size: var(--text-sm);
   line-height: 1.7;
   margin-top: var(--space-3);
