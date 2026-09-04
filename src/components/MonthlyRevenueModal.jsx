@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X, FileDown, Calendar } from "lucide-react";
 import { fetchMonthlyRevenue, formatPrice } from "../hooks/useStores";
 import { exportMonthlyRevenueCSV } from "../utils/csvExport";
+import { useLanguage } from "../i18n/LanguageContext";
 
 const overlayVariants = {
   hidden: { opacity: 0 },
@@ -30,6 +31,7 @@ function toMonthInputValue(date) {
  * @param {{ isOpen: boolean, onClose: Function, storeId: string, storeName: string }} props
  */
 export default function MonthlyRevenueModal({ isOpen, onClose, storeId, storeName }) {
+  const { t } = useLanguage();
   const [selectedMonth, setSelectedMonth] = useState(() => toMonthInputValue(new Date()));
   const [monthlyData, setMonthlyData] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -67,16 +69,16 @@ export default function MonthlyRevenueModal({ isOpen, onClose, storeId, storeNam
           <motion.div
             className="sheet-panel" style={{ zIndex: 1201, maxHeight: "94dvh", display: "flex", flexDirection: "column" }}
             variants={sheetVariants} initial="hidden" animate="visible" exit="exit"
-            role="dialog" aria-modal="true" aria-label="Monthly revenue"
+            role="dialog" aria-modal="true" aria-label={t("owner.transactions.monthlyTitle")}
           >
             <div className="sheet-handle" aria-hidden="true" />
 
             <div className="sheet-header">
               <div className="sheet-header__info">
-                <h2 className="sheet-header__name">Monthly Revenue</h2>
-                <span className="sheet-header__type">Earnings from sales, grouped by month.</span>
+                <h2 className="sheet-header__name">{t("owner.transactions.monthlyTitle")}</h2>
+                <span className="sheet-header__type">{t("owner.transactions.monthlySubtitle")}</span>
               </div>
-              <button className="sheet-close-btn" onClick={onClose} aria-label="Close" type="button">
+              <button className="sheet-close-btn" onClick={onClose} aria-label={t("owner.transactions.close")} type="button">
                 <X size={20} strokeWidth={2} />
               </button>
             </div>
@@ -102,7 +104,7 @@ export default function MonthlyRevenueModal({ isOpen, onClose, storeId, storeNam
                   whiteSpace: "nowrap",
                 }}
               >
-                <FileDown size={14} /> Export All (CSV)
+                <FileDown size={14} /> {t("owner.transactions.exportAllCsv")}
               </button>
             </div>
 
@@ -127,10 +129,10 @@ export default function MonthlyRevenueModal({ isOpen, onClose, storeId, storeNam
                     {selectedMonthData ? (
                       <>
                         <div style={{ fontSize: 24, fontWeight: 800 }}>{formatPrice(selectedMonthData.totalEarnings)}</div>
-                        <div style={{ fontSize: 13 }}>{selectedMonthData.unitsSold} units sold</div>
+                        <div style={{ fontSize: 13 }}>{t("owner.transactions.unitsSold", selectedMonthData.unitsSold)}</div>
                       </>
                     ) : (
-                      <div style={{ fontSize: 14 }}>No sales recorded this month.</div>
+                      <div style={{ fontSize: 14 }}>{t("owner.transactions.noSalesMonth")}</div>
                     )}
                   </div>
 
@@ -138,7 +140,7 @@ export default function MonthlyRevenueModal({ isOpen, onClose, storeId, storeNam
                   {monthlyData.length > 0 && (
                     <>
                       <div style={{ fontSize: 12, fontWeight: 700, color: "var(--color-text-muted)", textTransform: "uppercase", marginBottom: 8 }}>
-                        All Months
+                        {t("owner.transactions.allMonths")}
                       </div>
                       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                         {monthlyData.map((m) => (

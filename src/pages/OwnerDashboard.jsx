@@ -39,6 +39,9 @@ import {
   UploadCloud,
   ShoppingCart,
   FileDown,
+  Languages,
+  Sun,
+  Moon,
 } from "lucide-react";
 import { supabase } from "../config/supabaseClient";
 import { useMyStores, useOwnerInventory, deleteStore, formatLastUpdated, formatPrice, recordStockAdjustment } from "../hooks/useStores";
@@ -52,6 +55,7 @@ import DailyTransactionsModal from "../components/DailyTransactionsModal";
 import MonthlyRevenueModal from "../components/MonthlyRevenueModal";
 import { exportCurrentInventoryCSV } from "../utils/csvExport";
 import { useLanguage } from "../i18n/LanguageContext";
+import { useTheme } from "../theme/ThemeContext";
 
 // Colors reference CSS custom properties rather than literal hex — see
 // root-tokens-patch.css from the rebrand pass. Labels come from the
@@ -70,9 +74,9 @@ const STATUS_CONFIG = {
 // ProductFormModal's decrease prompt, duplicated here rather than
 // imported since it's a 3-item array, not worth a shared module for.
 const DECREASE_REASONS = [
-  { value: "spoiled", label: "Spoiled" },
-  { value: "personal_use", label: "Personal Use" },
-  { value: "other", label: "Other" },
+  { value: "spoiled", labelKey: "transactionType.spoiled" },
+  { value: "personal_use", labelKey: "transactionType.personal_use" },
+  { value: "other", labelKey: "transactionType.other" },
 ];
 
 /**
@@ -106,10 +110,10 @@ function QuantityStepper({ product, onChange }) {
     return (
       <div style={{ marginTop: 8 }}>
         <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 6 }}>
-          Why is stock going down?
+          {t("owner.dashboard.whyStockDown")}
         </p>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {DECREASE_REASONS.map(({ value, label }) => (
+          {DECREASE_REASONS.map(({ value, labelKey }) => (
             <button
               key={value}
               type="button"
@@ -121,7 +125,7 @@ function QuantityStepper({ product, onChange }) {
                 fontSize: 12, fontWeight: 600, cursor: "pointer",
               }}
             >
-              {label}
+              {t(labelKey)}
             </button>
           ))}
           <button
@@ -134,7 +138,7 @@ function QuantityStepper({ product, onChange }) {
               fontSize: 12, fontWeight: 600, color: "var(--color-text-muted)", cursor: "pointer",
             }}
           >
-            Cancel
+            {t("owner.dashboard.cancel")}
           </button>
         </div>
       </div>
@@ -282,13 +286,15 @@ function ProductCard({ product, onQuantityChange, onEdit, onDelete }) {
 
 // ─── Login screen with Google + Email (Supabase Auth) ────────────────────────
 function LoginScreen() {
-  const { t } = useLanguage();
+  const { t, language, setLanguage } = useLanguage();
+  const { theme, toggleTheme } = useTheme();
   const [showEmailForm, setShowEmailForm] = useState(false);
   const [email, setEmail]         = useState("");
   const [password, setPassword]   = useState("");
   const [error, setError]         = useState("");
   const [loading, setLoading]     = useState(false);
   const [gLoading, setGLoading]   = useState(false);
+  const [fbLoading, setFbLoading] = useState(false);
 
   const handleGoogle = async () => {
     setError(""); setGLoading(true);
@@ -299,6 +305,25 @@ function LoginScreen() {
     if (oauthError) {
       setError(t("owner.login.googleFailed"));
       setGLoading(false);
+    }
+  };
+
+  // Requires Facebook enabled as a provider in Supabase Auth settings,
+  // which in turn requires a Facebook Developer App (App ID + App
+  // Secret) with a Valid OAuth Redirect URI pointing at your Supabase
+  // project's callback URL — this is account/dashboard setup on both
+  // Facebook's and Supabase's side, not something this code can do for
+  // you. Until that's configured, clicking this button will fail with
+  // an error from Supabase saying the provider isn't enabled.
+  const handleFacebook = async () => {
+    setError(""); setFbLoading(true);
+    const { error: oauthError } = await supabase.auth.signInWithOAuth({
+      provider: "facebook",
+      options: { redirectTo: window.location.origin + window.location.pathname },
+    });
+    if (oauthError) {
+      setError(t("owner.login.facebookFailed"));
+      setFbLoading(false);
     }
   };
 
@@ -318,7 +343,39 @@ function LoginScreen() {
   };
 
   return (
-    <div className="login-screen">
+    <div className="login-screen" style={{ position: "relative" }}>
+      <button
+        type="button"
+        onClick={() => setLanguage(language === "en" ? "tl" : "en")}
+        aria-label={t("common.language")}
+        title={t("common.language")}
+        style={{
+          position: "absolute", top: "calc(16px + env(safe-area-inset-top, 0px))", right: 16,
+          zIndex: 10, display: "flex", alignItems: "center", gap: 6,
+          height: 36, padding: "0 12px", borderRadius: "var(--radius-pill, 999px)",
+          background: "rgba(255,255,255,0.1)", color: "#fff", border: "none",
+          fontSize: 12, fontWeight: 700, cursor: "pointer",
+        }}
+      >
+        <Languages size={14} strokeWidth={2.2} />
+        {language === "en" ? "TL" : "EN"}
+      </button>
+
+      <button
+        type="button"
+        onClick={toggleTheme}
+        aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+        title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+        style={{
+          position: "absolute", top: "calc(60px + env(safe-area-inset-top, 0px))", right: 16,
+          zIndex: 10, width: 36, height: 36, borderRadius: "50%",
+          background: "rgba(255,255,255,0.1)", color: "#fff", border: "none",
+          display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
+        }}
+      >
+        {theme === "dark" ? <Sun size={15} strokeWidth={2.2} /> : <Moon size={15} strokeWidth={2.2} />}
+      </button>
+
       <div className="login-card">
         <div className="login-card__logo"><Store size={36} /></div>
         <h1 className="login-card__title">{t("owner.login.title")}</h1>
@@ -326,7 +383,7 @@ function LoginScreen() {
 
         {/* Google button — brand colors below are Google's own official
             colors and must stay exactly as-is per Google's brand guidelines. */}
-        <button type="button" className="google-signin-btn" onClick={handleGoogle} disabled={gLoading || loading}>
+        <button type="button" className="google-signin-btn" onClick={handleGoogle} disabled={gLoading || loading || fbLoading}>
           {gLoading
             ? <span className="map-loading-spinner" style={{ width: 20, height: 20, borderWidth: 2.5, borderTopColor: "#4285F4" }} />
             : (
@@ -338,6 +395,30 @@ function LoginScreen() {
               </svg>
             )}
           {gLoading ? t("owner.login.signingIn") : t("owner.login.continueGoogle")}
+        </button>
+
+        {/* Facebook button — #1877F2 is Facebook's own official brand
+            blue, kept exact per their brand guidelines, same treatment
+            as Google's colors above. */}
+        <button
+          type="button"
+          onClick={handleFacebook}
+          disabled={gLoading || loading || fbLoading}
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+            width: "100%", height: 46, marginTop: 10, borderRadius: 10,
+            background: "#1877F2", color: "#fff", border: "none",
+            fontSize: 14, fontWeight: 700, cursor: "pointer",
+          }}
+        >
+          {fbLoading
+            ? <span className="map-loading-spinner" style={{ width: 20, height: 20, borderWidth: 2.5, borderTopColor: "#fff" }} />
+            : (
+              <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" fill="#fff">
+                <path d="M22 12.06C22 6.5 17.52 2 12 2S2 6.5 2 12.06c0 5.02 3.66 9.18 8.44 9.94v-7.03H7.9v-2.91h2.54V9.85c0-2.51 1.49-3.9 3.77-3.9 1.09 0 2.24.2 2.24.2v2.46h-1.26c-1.24 0-1.63.77-1.63 1.56v1.88h2.78l-.44 2.91h-2.34V22c4.78-.76 8.44-4.92 8.44-9.94z"/>
+              </svg>
+            )}
+          {fbLoading ? t("owner.login.signingIn") : t("owner.login.continueFacebook")}
         </button>
 
         <div className="login-divider"><span>{t("owner.login.or")}</span></div>
@@ -512,7 +593,8 @@ function StoreSwitcher({ stores, selectedStoreId, onSelect }) {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function OwnerDashboard({ session }) {
-  const { t } = useLanguage();
+  const { t, language, setLanguage } = useLanguage();
+  const { theme, toggleTheme } = useTheme();
   const user = session?.user ?? null;
 
   const { stores, checked: storesChecked, loading: storesLoading, refetch: refetchStores } = useMyStores(user?.id ?? null);
@@ -642,6 +724,35 @@ export default function OwnerDashboard({ session }) {
             <Trash2 size={16} strokeWidth={2} />
             <span>{t("owner.dashboard.deleteStoreLabel")}</span>
           </button>
+          <button
+            type="button"
+            onClick={() => setLanguage(language === "en" ? "tl" : "en")}
+            aria-label={t("common.language")}
+            title={t("common.language")}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 6, height: 36, padding: "0 12px",
+              borderRadius: "var(--radius-pill, 999px)", fontSize: 12, fontWeight: 700,
+              background: "rgba(255,255,255,0.12)", color: "#fff", border: "1px solid rgba(255,255,255,0.2)",
+              cursor: "pointer",
+            }}
+          >
+            <Languages size={14} strokeWidth={2.2} />
+            {language === "en" ? "TL" : "EN"}
+          </button>
+          <button
+            type="button"
+            onClick={toggleTheme}
+            aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+            title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+            style={{
+              display: "inline-flex", alignItems: "center", justifyContent: "center",
+              width: 36, height: 36, borderRadius: "50%",
+              background: "rgba(255,255,255,0.12)", color: "#fff", border: "1px solid rgba(255,255,255,0.2)",
+              cursor: "pointer",
+            }}
+          >
+            {theme === "dark" ? <Sun size={15} strokeWidth={2.2} /> : <Moon size={15} strokeWidth={2.2} />}
+          </button>
           <button className="dashboard-header__logout" onClick={() => supabase.auth.signOut()} type="button">{t("owner.dashboard.signOut")}</button>
         </div>
       </header>
@@ -685,7 +796,7 @@ export default function OwnerDashboard({ session }) {
               }}
             >
               <ShoppingCart size={16} strokeWidth={2} />
-              <span>New Transaction</span>
+              <span>{t("owner.dashboard.newTransaction")}</span>
             </button>
             <button type="button" className="dashboard-add-btn" onClick={openAddModal}>
               <Plus size={18} strokeWidth={2.5} /> {t("owner.dashboard.addProduct")}
@@ -708,7 +819,7 @@ export default function OwnerDashboard({ session }) {
               background: "var(--color-surface-3)", color: "var(--color-text-secondary)", border: "none",
             }}
           >
-            <FileDown size={14} /> Inventory CSV
+            <FileDown size={14} /> {t("owner.dashboard.inventoryCsv")}
           </button>
           <button
             type="button"
@@ -719,7 +830,7 @@ export default function OwnerDashboard({ session }) {
               background: "var(--color-surface-3)", color: "var(--color-text-secondary)", border: "none",
             }}
           >
-            <FileDown size={14} /> Today's Transactions
+            <FileDown size={14} /> {t("owner.dashboard.todaysTransactions")}
           </button>
           <button
             type="button"
@@ -730,7 +841,7 @@ export default function OwnerDashboard({ session }) {
               background: "var(--color-surface-3)", color: "var(--color-text-secondary)", border: "none",
             }}
           >
-            <FileDown size={14} /> Monthly Revenue
+            <FileDown size={14} /> {t("owner.dashboard.monthlyRevenue")}
           </button>
         </div>
 

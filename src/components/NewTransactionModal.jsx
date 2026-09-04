@@ -15,6 +15,7 @@ import React, { useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Plus, Trash2, ShoppingCart, AlertTriangle } from "lucide-react";
 import { recordMultiSale, formatPrice } from "../hooks/useStores";
+import { useLanguage } from "../i18n/LanguageContext";
 
 const overlayVariants = {
   hidden: { opacity: 0 },
@@ -36,6 +37,7 @@ const sheetVariants = {
  * }} props
  */
 export default function NewTransactionModal({ isOpen, onClose, inventory, onCompleted }) {
+  const { t } = useLanguage();
   const [cart, setCart] = useState([]);
   const [selectedProductId, setSelectedProductId] = useState("");
   const [addQuantity, setAddQuantity] = useState("1");
@@ -121,7 +123,7 @@ export default function NewTransactionModal({ isOpen, onClose, inventory, onComp
 
     if (saleError) {
       console.error("Transaction failed:", saleError);
-      setError(saleError.message || "Could not complete this transaction. Please try again.");
+      setError(saleError.message || t("owner.transactions.transactionFailed"));
       setSaving(false);
       return;
     }
@@ -143,16 +145,16 @@ export default function NewTransactionModal({ isOpen, onClose, inventory, onComp
           <motion.div
             className="sheet-panel" style={{ zIndex: 1201, maxHeight: "94dvh", display: "flex", flexDirection: "column" }}
             variants={sheetVariants} initial="hidden" animate="visible" exit="exit"
-            role="dialog" aria-modal="true" aria-label="New transaction"
+            role="dialog" aria-modal="true" aria-label={t("owner.transactions.newTransactionTitle")}
           >
             <div className="sheet-handle" aria-hidden="true" />
 
             <div className="sheet-header">
               <div className="sheet-header__info">
-                <h2 className="sheet-header__name">New Transaction</h2>
-                <span className="sheet-header__type">Add one or more products sold, then submit together.</span>
+                <h2 className="sheet-header__name">{t("owner.transactions.newTransactionTitle")}</h2>
+                <span className="sheet-header__type">{t("owner.transactions.newTransactionSubtitle")}</span>
               </div>
-              <button className="sheet-close-btn" onClick={resetAndClose} aria-label="Close" type="button">
+              <button className="sheet-close-btn" onClick={resetAndClose} aria-label={t("owner.transactions.close")} type="button">
                 <X size={20} strokeWidth={2} />
               </button>
             </div>
@@ -161,23 +163,23 @@ export default function NewTransactionModal({ isOpen, onClose, inventory, onComp
 
               <div style={{ display: "flex", gap: 8, alignItems: "flex-end", marginBottom: 16 }}>
                 <div className="pform__field" style={{ flex: 2, marginBottom: 0 }}>
-                  <label className="pform__label" htmlFor="txn-product">Product</label>
+                  <label className="pform__label" htmlFor="txn-product">{t("owner.transactions.productLabel")}</label>
                   <select
                     id="txn-product"
                     className="pform__select"
                     value={selectedProductId}
                     onChange={(e) => { setSelectedProductId(e.target.value); setAddQuantity("1"); }}
                   >
-                    <option value="">— Choose a product —</option>
+                    <option value="">{t("owner.transactions.chooseProduct")}</option>
                     {sellableInventory.map((p) => (
                       <option key={p.id} value={p.id}>
-                        {p.name} ({p.quantity} {p.unit || "piece"} left)
+                        {p.name} {t("owner.transactions.leftSuffix", p.quantity, p.unit || "piece")}
                       </option>
                     ))}
                   </select>
                 </div>
                 <div className="pform__field" style={{ flex: 1, marginBottom: 0 }}>
-                  <label className="pform__label" htmlFor="txn-qty">Qty</label>
+                  <label className="pform__label" htmlFor="txn-qty">{t("owner.transactions.qtyLabel")}</label>
                   <input
                     id="txn-qty"
                     className="pform__input"
@@ -203,20 +205,20 @@ export default function NewTransactionModal({ isOpen, onClose, inventory, onComp
                     Number(addQuantity) > remainingForSelected
                   }
                 >
-                  <Plus size={16} /> Add
+                  <Plus size={16} /> {t("owner.transactions.add")}
                 </button>
               </div>
 
               {selectedProductId && Number(addQuantity) > remainingForSelected && (
                 <p className="pform__error" style={{ marginTop: -8, marginBottom: 16 }}>
-                  ⚠️ Only {remainingForSelected} left to add (some may already be in your cart below).
+                  ⚠️ {t("owner.transactions.onlyNLeftToAdd", remainingForSelected)}
                 </p>
               )}
 
               {cart.length === 0 ? (
                 <div className="dashboard-empty" style={{ padding: "24px 0" }}>
                   <ShoppingCart size={32} style={{ opacity: 0.3 }} />
-                  <span>No items added yet.</span>
+                  <span>{t("owner.transactions.noItemsYet")}</span>
                 </div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -234,7 +236,7 @@ export default function NewTransactionModal({ isOpen, onClose, inventory, onComp
                           {line.name}
                         </div>
                         <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
-                          {formatPrice(line.price)} each
+                          {formatPrice(line.price)} {t("owner.transactions.each")}
                         </div>
                       </div>
                       <input
@@ -255,7 +257,7 @@ export default function NewTransactionModal({ isOpen, onClose, inventory, onComp
                       <button
                         type="button"
                         onClick={() => handleRemoveLine(line.productId)}
-                        aria-label={`Remove ${line.name}`}
+                        aria-label={t("owner.transactions.removeAria", line.name)}
                         style={{ background: "none", border: "none", color: "var(--color-out)", cursor: "pointer", display: "flex" }}
                       >
                         <Trash2 size={16} />
@@ -274,18 +276,18 @@ export default function NewTransactionModal({ isOpen, onClose, inventory, onComp
                     fontWeight: 700, fontSize: 16,
                   }}
                 >
-                  <span>Total Sale</span>
+                  <span>{t("owner.transactions.totalSale")}</span>
                   <span>{formatPrice(total)}</span>
                 </div>
               )}
 
               <div className="pform__field" style={{ marginTop: 16 }}>
-                <label className="pform__label" htmlFor="txn-notes">Description (optional)</label>
+                <label className="pform__label" htmlFor="txn-notes">{t("owner.transactions.descriptionOptional")}</label>
                 <textarea
                   id="txn-notes"
                   className="pform__input"
                   style={{ minHeight: 60, resize: "vertical", fontFamily: "inherit" }}
-                  placeholder="e.g. Morning batch, walk-in customer, etc."
+                  placeholder={t("owner.transactions.descriptionPlaceholder")}
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                   maxLength={300}
@@ -309,7 +311,7 @@ export default function NewTransactionModal({ isOpen, onClose, inventory, onComp
                 {saving ? (
                   <span className="map-loading-spinner" style={{ width: 18, height: 18, borderWidth: 2, borderTopColor: "#fff" }} />
                 ) : (
-                  <><ShoppingCart size={18} /> Submit Transaction ({formatPrice(total)})</>
+                  <><ShoppingCart size={18} /> {t("owner.transactions.submitTransaction", formatPrice(total))}</>
                 )}
               </button>
             </div>

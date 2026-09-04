@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X, FileDown, Calendar } from "lucide-react";
 import { fetchDailyTransactions, formatPrice } from "../hooks/useStores";
 import { exportDailyTransactionsCSV } from "../utils/csvExport";
+import { useLanguage } from "../i18n/LanguageContext";
 
 const overlayVariants = {
   hidden: { opacity: 0 },
@@ -18,14 +19,6 @@ const sheetVariants = {
   hidden:  { y: "100%", opacity: 0 },
   visible: { y: 0, opacity: 1, transition: { type: "spring", damping: 28, stiffness: 300, mass: 0.9 } },
   exit:    { y: "100%", opacity: 0, transition: { type: "tween", ease: "easeIn", duration: 0.2 } },
-};
-
-const TYPE_LABELS = {
-  sold: "Sold",
-  spoiled: "Spoiled",
-  personal_use: "Personal Use",
-  other: "Other",
-  restocked: "Restocked",
 };
 
 /** Local YYYY-MM-DD for a Date, for the <input type="date"> value. */
@@ -39,6 +32,7 @@ function toDateInputValue(date) {
  * @param {{ isOpen: boolean, onClose: Function, storeId: string, storeName: string }} props
  */
 export default function DailyTransactionsModal({ isOpen, onClose, storeId, storeName }) {
+  const { t } = useLanguage();
   const [selectedDate, setSelectedDate] = useState(() => toDateInputValue(new Date()));
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -61,8 +55,8 @@ export default function DailyTransactionsModal({ isOpen, onClose, storeId, store
   }, [isOpen, loadTransactions]);
 
   const totalEarnings = transactions
-    .filter((t) => t.transactionType === "sold")
-    .reduce((sum, t) => sum + Number(t.earnings), 0);
+    .filter((txn) => txn.transactionType === "sold")
+    .reduce((sum, txn) => sum + Number(txn.earnings), 0);
 
   const handleExport = () => {
     exportDailyTransactionsCSV(transactions, storeName);
@@ -80,18 +74,18 @@ export default function DailyTransactionsModal({ isOpen, onClose, storeId, store
           <motion.div
             className="sheet-panel" style={{ zIndex: 1201, maxHeight: "94dvh", display: "flex", flexDirection: "column" }}
             variants={sheetVariants} initial="hidden" animate="visible" exit="exit"
-            role="dialog" aria-modal="true" aria-label="Daily transactions"
+            role="dialog" aria-modal="true" aria-label={t("owner.transactions.dailyTitle")}
           >
             <div className="sheet-handle" aria-hidden="true" />
 
             <div className="sheet-header">
               <div className="sheet-header__info">
-                <h2 className="sheet-header__name">Daily Transactions</h2>
+                <h2 className="sheet-header__name">{t("owner.transactions.dailyTitle")}</h2>
                 <span className="sheet-header__type">
-                  {transactions.length} transaction{transactions.length !== 1 ? "s" : ""} · {formatPrice(totalEarnings)} earned
+                  {t("owner.transactions.dailySubtitle", transactions.length, formatPrice(totalEarnings))}
                 </span>
               </div>
-              <button className="sheet-close-btn" onClick={onClose} aria-label="Close" type="button">
+              <button className="sheet-close-btn" onClick={onClose} aria-label={t("owner.transactions.close")} type="button">
                 <X size={20} strokeWidth={2} />
               </button>
             </div>
@@ -117,7 +111,7 @@ export default function DailyTransactionsModal({ isOpen, onClose, storeId, store
                   whiteSpace: "nowrap",
                 }}
               >
-                <FileDown size={14} /> Export CSV
+                <FileDown size={14} /> {t("owner.transactions.exportCsv")}
               </button>
             </div>
 
@@ -128,31 +122,31 @@ export default function DailyTransactionsModal({ isOpen, onClose, storeId, store
                 </div>
               ) : transactions.length === 0 ? (
                 <div className="dashboard-empty" style={{ padding: "24px 0" }}>
-                  <span>No transactions on this day.</span>
+                  <span>{t("owner.transactions.noTransactionsDay")}</span>
                 </div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {transactions.map((t) => (
+                  {transactions.map((txn) => (
                     <div
-                      key={t.id}
+                      key={txn.id}
                       style={{
                         display: "flex", justifyContent: "space-between", alignItems: "center",
                         padding: "10px 12px", borderRadius: 10, background: "var(--color-surface-3)",
                       }}
                     >
                       <div style={{ minWidth: 0 }}>
-                        <div style={{ fontWeight: 700, fontSize: 14 }}>{t.productName}</div>
+                        <div style={{ fontWeight: 700, fontSize: 14 }}>{txn.productName}</div>
                         <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
-                          {TYPE_LABELS[t.transactionType] ?? t.transactionType} · {new Date(t.createdAt).toLocaleTimeString()}
-                          {t.notes ? ` · ${t.notes}` : ""}
+                          {t(`transactionType.${txn.transactionType}`)} · {new Date(txn.createdAt).toLocaleTimeString()}
+                          {txn.notes ? ` · ${txn.notes}` : ""}
                         </div>
                       </div>
                       <div style={{ textAlign: "right", flexShrink: 0, marginLeft: 12 }}>
-                        <div style={{ fontWeight: 700, fontSize: 14, color: t.quantityChanged < 0 ? "var(--color-out)" : "var(--color-available)" }}>
-                          {t.quantityChanged > 0 ? "+" : ""}{t.quantityChanged}
+                        <div style={{ fontWeight: 700, fontSize: 14, color: txn.quantityChanged < 0 ? "var(--color-out)" : "var(--color-available)" }}>
+                          {txn.quantityChanged > 0 ? "+" : ""}{txn.quantityChanged}
                         </div>
-                        {t.transactionType === "sold" && (
-                          <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>{formatPrice(t.earnings)}</div>
+                        {txn.transactionType === "sold" && (
+                          <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>{formatPrice(txn.earnings)}</div>
                         )}
                       </div>
                     </div>

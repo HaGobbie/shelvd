@@ -57,9 +57,9 @@ const STATUS_CONFIG = {
 };
 
 const DECREASE_REASONS = [
-  { value: "spoiled", label: "Spoiled" },
-  { value: "personal_use", label: "Personal Use" },
-  { value: "other", label: "Other" },
+  { value: "spoiled", labelKey: "transactionType.spoiled" },
+  { value: "personal_use", labelKey: "transactionType.personal_use" },
+  { value: "other", labelKey: "transactionType.other" },
 ];
 
 function computeStatus(quantity, lowStockThreshold) {
@@ -267,21 +267,20 @@ export default function ProductFormModal({ isOpen, onClose, storeId, initialData
                   <button
                     type="button"
                     onClick={() => setShowReasonPrompt(false)}
-                    aria-label="Back"
+                    aria-label={t("owner.product.decreaseReasonBack")}
                     style={{ background: "none", border: "none", cursor: "pointer", color: "var(--color-text-muted)" }}
                   >
                     <ArrowLeft size={20} />
                   </button>
                 </div>
 
-                <h2 className="sheet-header__name" style={{ marginBottom: 4 }}>Why did stock go down?</h2>
+                <h2 className="sheet-header__name" style={{ marginBottom: 4 }}>{t("owner.product.decreaseReasonTitle")}</h2>
                 <p style={{ fontSize: 13, color: "var(--color-text-secondary)", marginBottom: 16 }}>
-                  Quantity is decreasing from {initialData?.quantity ?? 0} to {pendingSaveRef.current?.finalQuantity ?? 0}.
-                  Pick a reason so this shows up correctly in your reports.
+                  {t("owner.product.decreaseReasonDesc", initialData?.quantity ?? 0, pendingSaveRef.current?.finalQuantity ?? 0)}
                 </p>
 
                 <div className="status-radio-group" role="radiogroup" style={{ marginBottom: 16 }}>
-                  {DECREASE_REASONS.map(({ value, label }) => {
+                  {DECREASE_REASONS.map(({ value, labelKey }) => {
                     const selected = decreaseReason === value;
                     return (
                       <button
@@ -292,7 +291,7 @@ export default function ProductFormModal({ isOpen, onClose, storeId, initialData
                         className={`status-radio-tile ${selected ? "status-radio-tile--active" : ""}`}
                         onClick={() => setDecreaseReason(value)}
                       >
-                        <span>{label}</span>
+                        <span>{t(labelKey)}</span>
                       </button>
                     );
                   })}
@@ -300,12 +299,12 @@ export default function ProductFormModal({ isOpen, onClose, storeId, initialData
 
                 {decreaseReason === "other" && (
                   <div className="pform__field">
-                    <label className="pform__label" htmlFor="decrease-notes">Note (optional)</label>
+                    <label className="pform__label" htmlFor="decrease-notes">{t("owner.product.noteOptional")}</label>
                     <textarea
                       id="decrease-notes"
                       className="pform__input"
                       style={{ minHeight: 60, resize: "vertical", fontFamily: "inherit" }}
-                      placeholder="What happened?"
+                      placeholder={t("owner.product.whatHappenedPlaceholder")}
                       value={decreaseNotes}
                       onChange={(e) => setDecreaseNotes(e.target.value)}
                       maxLength={300}
@@ -325,7 +324,7 @@ export default function ProductFormModal({ isOpen, onClose, storeId, initialData
                   {saving ? (
                     <span className="map-loading-spinner" style={{ width: 18, height: 18, borderWidth: 2, borderTopColor: "#fff" }} />
                   ) : (
-                    <>Confirm & Save</>
+                    <>{t("owner.product.confirmAndSave")}</>
                   )}
                 </button>
               </div>
@@ -446,7 +445,7 @@ export default function ProductFormModal({ isOpen, onClose, storeId, initialData
                     {isEditMode && Number(quantity) < (initialData?.quantity ?? 0) && (
                       <p style={{ fontSize: 12, color: "var(--color-low)", marginTop: -8, marginBottom: 12 }}>
                         <AlertTriangle size={12} style={{ display: "inline", marginRight: 4 }} />
-                        You'll be asked why stock is decreasing when you save.
+                        {t("owner.product.decreaseWillAsk")}
                       </p>
                     )}
 
