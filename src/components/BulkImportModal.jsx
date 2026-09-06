@@ -15,7 +15,7 @@
 //
 // Requires: npm install papaparse
 
-import React, { useState, useCallback, useRef } from "react";
+import React, { useState, useCallback, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import Papa from "papaparse";
 import {
@@ -34,6 +34,7 @@ import {
   parsePrice,
   parseQuantity,
   parseThreshold,
+  findDuplicateSkus,
 } from "../utils/csvColumnMapping";
 import { useLanguage } from "../i18n/LanguageContext";
 
@@ -165,9 +166,30 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
     setStep("review");
   };
 
-  const flaggedCount = reviewRows.filter((r) => r.errors.length > 0 && !r.excluded).length;
+  // Recomputed from the WHOLE batch every time reviewRows changes —
+  // duplicate SKUs are a cross-row condition, not something a single
+  // row's own validation can catch. A plain per-row check (like the
+  // missing-name/invalid-price checks in updateRow below) would only
+  // ever see one row at a time and could never notice that row 3 and
+  // row 47 share the same SKU.
+  const duplicateSkus = useMemo(() => findDuplicateSkus(reviewRows), [reviewRows]);
+
+  const rowHasDuplicateSku = useCallback(
+    (row) => {
+      const sku = (row.sku ?? "").toString().trim().toLowerCase();
+      return Boolean(sku) && duplicateSkus.has(sku);
+    },
+    [duplicateSkus]
+  );
+
+  const isRowFlagged = useCallback(
+    (row) => row.errors.length > 0 || rowHasDuplicateSku(row),
+    [rowHasDuplicateSku]
+  );
+
+  const flaggedCount = reviewRows.filter((r) => isRowFlagged(r) && !r.excluded).length;
   const includedCount = reviewRows.filter((r) => !r.excluded).length;
-  const readyCount = reviewRows.filter((r) => !r.excluded && r.errors.length === 0).length;
+  const readyCount = reviewRows.filter((r) => !r.excluded && !isRowFlagged(r)).length;
 
   const updateRow = (id, patch) => {
     setReviewRows((prev) =>
@@ -185,7 +207,7 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
 
   const excludeAllFlagged = () => {
     setReviewRows((prev) =>
-      prev.map((r) => (r.errors.length > 0 ? { ...r, excluded: true } : r))
+      prev.map((r) => (isRowFlagged(r) ? { ...r, excluded: true } : r))
     );
   };
 
@@ -194,7 +216,7 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
     setImportResult(null);
 
     const validRows = reviewRows
-      .filter((r) => !r.excluded && r.errors.length === 0)
+      .filter((r) => !r.excluded && !isRowFlagged(r))
       .map((r) => ({
         name: r.name.trim(),
         category: r.category.trim() || "Uncategorized",
@@ -393,13 +415,15 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
                     </tr>
                   </thead>
                   <tbody>
-                    {reviewRows.map((row) => (
+                    {reviewRows.map((row) => {
+                      const dupSku = rowHasDuplicateSku(row);
+                      return (
                       <tr
                         key={row.id}
                         style={{
                           borderBottom: "1px solid var(--color-border-light, #eee)",
                           opacity: row.excluded ? 0.4 : 1,
-                          background: row.errors.length > 0 && !row.excluded ? "var(--color-out-bg)" : "transparent",
+                          background: isRowFlagged(row) && !row.excluded ? "var(--color-out-bg)" : "transparent",
                         }}
                       >
                         <td style={{ padding: 6 }}>
@@ -431,10 +455,15 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
                         <td style={{ padding: 6, minWidth: 130 }}>
                           <input
                             className="pform__input"
-                            style={{ padding: "4px 8px", fontSize: 13 }}
+                            style={{
+                              padding: "4px 8px",
+                              fontSize: 13,
+                              borderColor: dupSku ? "var(--color-out)" : undefined,
+                            }}
                             value={row.sku}
                             disabled={row.excluded}
                             placeholder={t("owner.bulkImport.optional")}
+                            title={dupSku ? t("owner.bulkImport.duplicateSku") : undefined}
                             onChange={(e) => updateRow(row.id, { sku: e.target.value })}
                           />
                         </td>
@@ -497,10 +526,18 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
                           />
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
+
+              {duplicateSkus.size > 0 && (
+                <p className="pform__error" style={{ marginTop: 12 }}>
+                  <AlertTriangle size={14} style={{ display: "inline", marginRight: 4 }} />
+                  {t("owner.bulkImport.duplicateSkuWarning", duplicateSkus.size)}
+                </p>
+              )}
 
               <div style={{ marginTop: 20, padding: 16, background: "var(--color-surface-3)", borderRadius: 10 }}>
                 <p style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>

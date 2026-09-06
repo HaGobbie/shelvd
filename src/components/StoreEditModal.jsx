@@ -35,6 +35,7 @@ import {
   MapPin,
   Store,
   Phone,
+  Share2,
 } from "lucide-react";
 import { supabase } from "../config/supabaseClient";
 import { useLanguage } from "../i18n/LanguageContext";
@@ -140,6 +141,7 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
   const TABS = [
     { id: "details",  label: t("owner.storeEdit.tabDetails"), Icon: Store  },
     { id: "location", label: t("owner.storeEdit.tabLocation"), Icon: MapPin },
+    { id: "socials",  label: t("owner.storeEdit.tabSocials"), Icon: Share2 },
   ];
 
   const [activeTab, setActiveTab]       = useState("details");
@@ -152,6 +154,9 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
   const [address, setAddress]           = useState("");
   const [lat, setLat]                   = useState(null);
   const [lng, setLng]                   = useState(null);
+  const [facebookUrl, setFacebookUrl]   = useState("");
+  const [instagramUrl, setInstagramUrl] = useState("");
+  const [tiktokUrl, setTiktokUrl]       = useState("");
 
   // ── UI state ──────────────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery]   = useState("");
@@ -173,6 +178,9 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
       setAddress(store.address ?? "");
       setLat(store.lat ?? null);
       setLng(store.lng ?? null);
+      setFacebookUrl(store.facebookUrl ?? "");
+      setInstagramUrl(store.instagramUrl ?? "");
+      setTiktokUrl(store.tiktokUrl ?? "");
       setSearchQuery(store.address ?? "");
       setActiveTab("details");
       setErrors({});
@@ -184,6 +192,12 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
   }, [isOpen, store]);
 
   // ── Validation ────────────────────────────────────────────────────────────
+  // A basic http(s):// prefix check only — deliberately not validating
+  // that the domain actually matches facebook.com/instagram.com/tiktok.com,
+  // since legitimate pages sometimes sit behind link shorteners or vanity
+  // domains. This just catches "pasted plain text instead of a URL."
+  const isValidUrl = (value) => !value.trim() || /^https?:\/\//i.test(value.trim());
+
   const validate = () => {
     const errs = {};
     if (!name.trim())          errs.name          = t("owner.storeEdit.nameRequired");
@@ -191,6 +205,9 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
     if (!ownerName.trim())     errs.ownerName     = t("owner.storeEdit.ownerRequired");
     if (!contactNumber.trim()) errs.contactNumber = t("owner.storeEdit.contactRequired");
     if (lat === null || lng === null) errs.coords = t("owner.storeEdit.coordsRequired");
+    if (!isValidUrl(facebookUrl))  errs.facebookUrl  = t("owner.storeEdit.invalidUrl");
+    if (!isValidUrl(instagramUrl)) errs.instagramUrl = t("owner.storeEdit.invalidUrl");
+    if (!isValidUrl(tiktokUrl))    errs.tiktokUrl    = t("owner.storeEdit.invalidUrl");
     return errs;
   };
 
@@ -241,8 +258,10 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
     const errs = validate();
     if (Object.keys(errs).length > 0) {
       setErrors(errs);
-      // If location error, switch to the location tab to show it
+      // Jump to whichever tab actually has the problem, so the person
+      // isn't left staring at "Details" wondering why Save won't work.
       if (errs.coords) setActiveTab("location");
+      else if (errs.facebookUrl || errs.instagramUrl || errs.tiktokUrl) setActiveTab("socials");
       return;
     }
 
@@ -259,6 +278,12 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
         address:        address.trim(),
         // EWKT text — Postgres casts this to geography(Point, 4326) automatically.
         location:       `SRID=4326;POINT(${lng} ${lat})`,
+        // Empty string -> null, not "", so a cleared field actually
+        // clears (and so it satisfies the DB's http(s):// CHECK
+        // constraint, which only exempts NULL, not empty string).
+        facebook_url:   facebookUrl.trim() || null,
+        instagram_url:  instagramUrl.trim() || null,
+        tiktok_url:     tiktokUrl.trim() || null,
       })
       .eq("id", store.id);
 
@@ -338,6 +363,9 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
                   <Icon size={15} strokeWidth={2} />
                   {label}
                   {id === "location" && errors.coords && (
+                    <span className="stedit__tab-error-dot" aria-label="Has errors" />
+                  )}
+                  {id === "socials" && (errors.facebookUrl || errors.instagramUrl || errors.tiktokUrl) && (
                     <span className="stedit__tab-error-dot" aria-label="Has errors" />
                   )}
                 </button>
@@ -520,6 +548,60 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
                       </div>
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* ── Socials tab ── */}
+              {activeTab === "socials" && (
+                <div>
+                  <p style={{ fontSize: "var(--text-sm)", color: "var(--color-text-secondary)", marginBottom: "var(--space-4)", lineHeight: 1.6 }}>
+                    {t("owner.storeEdit.socialsHint")}
+                  </p>
+
+                  <div className="regform__field">
+                    <label className="regform__label" htmlFor="se-facebook">{t("owner.storeEdit.facebookLabel")}</label>
+                    <input
+                      id="se-facebook"
+                      className={`pform__input ${errors.facebookUrl ? "pform__input--error" : ""}`}
+                      type="url"
+                      inputMode="url"
+                      placeholder={t("owner.storeEdit.socialUrlPlaceholder")}
+                      value={facebookUrl}
+                      onChange={(e) => { setFacebookUrl(e.target.value); setErrors((p) => ({ ...p, facebookUrl: undefined })); }}
+                      maxLength={300}
+                    />
+                    {errors.facebookUrl && <span className="regform__field-error"><AlertTriangle size={12} /> {errors.facebookUrl}</span>}
+                  </div>
+
+                  <div className="regform__field">
+                    <label className="regform__label" htmlFor="se-instagram">{t("owner.storeEdit.instagramLabel")}</label>
+                    <input
+                      id="se-instagram"
+                      className={`pform__input ${errors.instagramUrl ? "pform__input--error" : ""}`}
+                      type="url"
+                      inputMode="url"
+                      placeholder={t("owner.storeEdit.socialUrlPlaceholder")}
+                      value={instagramUrl}
+                      onChange={(e) => { setInstagramUrl(e.target.value); setErrors((p) => ({ ...p, instagramUrl: undefined })); }}
+                      maxLength={300}
+                    />
+                    {errors.instagramUrl && <span className="regform__field-error"><AlertTriangle size={12} /> {errors.instagramUrl}</span>}
+                  </div>
+
+                  <div className="regform__field">
+                    <label className="regform__label" htmlFor="se-tiktok">{t("owner.storeEdit.tiktokLabel")}</label>
+                    <input
+                      id="se-tiktok"
+                      className={`pform__input ${errors.tiktokUrl ? "pform__input--error" : ""}`}
+                      type="url"
+                      inputMode="url"
+                      placeholder={t("owner.storeEdit.socialUrlPlaceholder")}
+                      value={tiktokUrl}
+                      onChange={(e) => { setTiktokUrl(e.target.value); setErrors((p) => ({ ...p, tiktokUrl: undefined })); }}
+                      maxLength={300}
+                    />
+                    {errors.tiktokUrl && <span className="regform__field-error"><AlertTriangle size={12} /> {errors.tiktokUrl}</span>}
+                  </div>
                 </div>
               )}
 

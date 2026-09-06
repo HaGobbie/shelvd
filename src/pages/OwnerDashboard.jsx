@@ -42,6 +42,7 @@ import {
   Languages,
   Sun,
   Moon,
+  HelpCircle,
 } from "lucide-react";
 import { supabase } from "../config/supabaseClient";
 import { useMyStores, useOwnerInventory, deleteStore, formatLastUpdated, formatPrice, recordStockAdjustment } from "../hooks/useStores";
@@ -53,6 +54,7 @@ import BulkImportModal from "../components/BulkImportModal";
 import NewTransactionModal from "../components/NewTransactionModal";
 import DailyTransactionsModal from "../components/DailyTransactionsModal";
 import MonthlyRevenueModal from "../components/MonthlyRevenueModal";
+import OnboardingTour, { hasSeenOnboarding } from "../components/OnboardingTour";
 import { exportCurrentInventoryCSV } from "../utils/csvExport";
 import { useLanguage } from "../i18n/LanguageContext";
 import { useTheme } from "../theme/ThemeContext";
@@ -112,7 +114,7 @@ function QuantityStepper({ product, onChange }) {
         <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 6 }}>
           {t("owner.dashboard.whyStockDown")}
         </p>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {DECREASE_REASONS.map(({ value, labelKey }) => (
             <button
               key={value}
@@ -120,9 +122,9 @@ function QuantityStepper({ product, onChange }) {
               onClick={() => commitDecrease(value)}
               disabled={pending}
               style={{
-                padding: "6px 12px", borderRadius: "var(--radius-pill, 999px)",
+                minHeight: 44, padding: "0 16px", borderRadius: "var(--radius-pill, 999px)",
                 border: "1px solid var(--color-border)", background: "var(--color-surface)",
-                fontSize: 12, fontWeight: 600, cursor: "pointer",
+                fontSize: 13, fontWeight: 600, cursor: "pointer",
               }}
             >
               {t(labelKey)}
@@ -133,9 +135,9 @@ function QuantityStepper({ product, onChange }) {
             onClick={() => setPickingReason(false)}
             disabled={pending}
             style={{
-              padding: "6px 12px", borderRadius: "var(--radius-pill, 999px)",
+              minHeight: 44, padding: "0 16px", borderRadius: "var(--radius-pill, 999px)",
               border: "none", background: "none",
-              fontSize: 12, fontWeight: 600, color: "var(--color-text-muted)", cursor: "pointer",
+              fontSize: 13, fontWeight: 600, color: "var(--color-text-muted)", cursor: "pointer",
             }}
           >
             {t("owner.dashboard.cancel")}
@@ -637,6 +639,20 @@ export default function OwnerDashboard({ session }) {
   const [newTransactionOpen, setNewTransactionOpen] = useState(false);
   const [dailyModalOpen, setDailyModalOpen]   = useState(false);
   const [monthlyModalOpen, setMonthlyModalOpen] = useState(false);
+  const [onboardingOpen, setOnboardingOpen]   = useState(false);
+
+  // Auto-show the tour once per browser, the first time the FULL
+  // dashboard (not the login screen, not the loading state, not the
+  // registration wizard) actually renders — checking this here rather
+  // than in a top-level effect means it naturally waits until there's
+  // something real on screen for the tour to describe, instead of
+  // popping up over a spinner or an empty registration form.
+  useEffect(() => {
+    if (user && storesChecked && !storesLoading && !hasSeenOnboarding()) {
+      setOnboardingOpen(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, storesChecked, storesLoading]);
 
   const handleQuantityChange = async (productId, quantity, transactionType, notes = null) => {
     const { error } = await recordStockAdjustment(productId, quantity, transactionType, notes);
@@ -753,6 +769,20 @@ export default function OwnerDashboard({ session }) {
           >
             {theme === "dark" ? <Sun size={15} strokeWidth={2.2} /> : <Moon size={15} strokeWidth={2.2} />}
           </button>
+          <button
+            type="button"
+            onClick={() => setOnboardingOpen(true)}
+            aria-label={t("owner.onboarding.helpAria")}
+            title={t("owner.onboarding.helpAria")}
+            style={{
+              display: "inline-flex", alignItems: "center", justifyContent: "center",
+              width: 36, height: 36, borderRadius: "50%",
+              background: "rgba(255,255,255,0.12)", color: "#fff", border: "1px solid rgba(255,255,255,0.2)",
+              cursor: "pointer",
+            }}
+          >
+            <HelpCircle size={16} strokeWidth={2.2} />
+          </button>
           <button className="dashboard-header__logout" onClick={() => supabase.auth.signOut()} type="button">{t("owner.dashboard.signOut")}</button>
         </div>
       </header>
@@ -814,8 +844,8 @@ export default function OwnerDashboard({ session }) {
             onClick={handleExportInventory}
             disabled={inventory.length === 0}
             style={{
-              display: "inline-flex", alignItems: "center", gap: 6, height: 36, padding: "0 12px",
-              borderRadius: "var(--radius-md, 8px)", fontSize: 12, fontWeight: 600,
+              display: "inline-flex", alignItems: "center", gap: 6, height: 44, padding: "0 14px",
+              borderRadius: "var(--radius-md, 8px)", fontSize: 13, fontWeight: 600,
               background: "var(--color-surface-3)", color: "var(--color-text-secondary)", border: "none",
             }}
           >
@@ -825,8 +855,8 @@ export default function OwnerDashboard({ session }) {
             type="button"
             onClick={() => setDailyModalOpen(true)}
             style={{
-              display: "inline-flex", alignItems: "center", gap: 6, height: 36, padding: "0 12px",
-              borderRadius: "var(--radius-md, 8px)", fontSize: 12, fontWeight: 600,
+              display: "inline-flex", alignItems: "center", gap: 6, height: 44, padding: "0 14px",
+              borderRadius: "var(--radius-md, 8px)", fontSize: 13, fontWeight: 600,
               background: "var(--color-surface-3)", color: "var(--color-text-secondary)", border: "none",
             }}
           >
@@ -836,8 +866,8 @@ export default function OwnerDashboard({ session }) {
             type="button"
             onClick={() => setMonthlyModalOpen(true)}
             style={{
-              display: "inline-flex", alignItems: "center", gap: 6, height: 36, padding: "0 12px",
-              borderRadius: "var(--radius-md, 8px)", fontSize: 12, fontWeight: 600,
+              display: "inline-flex", alignItems: "center", gap: 6, height: 44, padding: "0 14px",
+              borderRadius: "var(--radius-md, 8px)", fontSize: 13, fontWeight: 600,
               background: "var(--color-surface-3)", color: "var(--color-text-secondary)", border: "none",
             }}
           >
@@ -910,6 +940,10 @@ export default function OwnerDashboard({ session }) {
         onClose={() => setDeleteStoreConfirmOpen(false)}
         store={myStore}
         onDeleted={() => refetchStores()}
+      />
+      <OnboardingTour
+        isOpen={onboardingOpen}
+        onClose={() => setOnboardingOpen(false)}
       />
     </div>
   );

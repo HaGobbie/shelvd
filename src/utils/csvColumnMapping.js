@@ -29,24 +29,32 @@ export const TARGET_FIELDS = [
 const FIELD_SYNONYMS = {
   name: [
     "name", "product name", "item name", "item title", "product",
-    "title", "item", "product title",
+    "title", "item", "product title", "listing title", "product listing",
+    "goods name", "merchandise name", "sku name", "variation name",
   ],
   price: [
     "price", "cost", "msrp", "retail price", "selling price",
-    "unit price", "amount", "price php", "srp",
+    "unit price", "amount", "price php", "srp", "sale price",
+    "selling price (php)", "unit price (php)", "list price", "regular price",
+    "current price", "shop price", "item price",
   ],
   category: [
     "category", "type", "product type", "department", "collection",
-    "product category", "group",
+    "product category", "group", "category name", "product group",
+    "classification", "subcategory", "sub-category", "tags",
   ],
   quantity: [
     "quantity", "qty", "stock", "stock qty", "stock quantity",
     "units", "on hand", "inventory count", "count", "available qty",
+    "available stock", "current stock", "stock on hand", "stock level",
+    "inventory", "in stock", "quantity available", "available",
+    "total stock", "stock count",
   ],
   low_stock_threshold: [
     "low stock threshold", "threshold", "alert level", "low stock alert",
     "alert tier", "reorder point", "reorder level", "reorder threshold",
-    "min stock", "minimum stock", "low stock level",
+    "min stock", "minimum stock", "low stock level", "safety stock",
+    "reorder qty", "restock level", "min qty", "minimum quantity",
   ],
   sku: [
     // Deliberately specific, real barcode/SKU terms only — NOT generic
@@ -55,15 +63,52 @@ const FIELD_SYNONYMS = {
     // a portable identifier. Auto-mapping those would create false
     // uniqueness collisions/non-collisions across separate uploads.
     "sku", "barcode", "ean", "upc", "gtin", "product code", "item code",
+    "variation sku", "seller sku", "product sku", "sku id", "item sku",
+    "product id number", "isbn", "asin",
   ],
   description: [
     "description", "details", "notes", "product description",
-    "item description", "summary",
+    "item description", "summary", "long description", "short description",
+    "product details", "about", "remarks",
   ],
   unit: [
     "unit", "uom", "unit of measure", "measure", "packaging",
+    "unit type", "sold by", "pack size", "package unit", "measurement unit",
   ],
 };
+
+/**
+ * findDuplicateSkus
+ * Returns a Set of normalized (trimmed, lowercased) SKU values that
+ * appear on more than one row in this batch. Blank SKUs are ignored —
+ * "no SKU" isn't a collision, and most CSVs will have many blank ones.
+ *
+ * This catches what the database's unique index alone cannot: two rows
+ * in the SAME upload sharing a SKU only ever collide against each other
+ * inside this one batch, never against anything already in the
+ * database, so a plain cross-import uniqueness check never sees them
+ * both at once — the first row inserts fine, and the second one's
+ * failure (or silent overwrite, depending on the Overwrite toggle)
+ * happens invisibly at import time with no clear indication which two
+ * rows caused it. Checking within the batch up front, before import,
+ * surfaces it as a normal reviewable error instead.
+ *
+ * @param {Array<{sku?: string}>} rows
+ * @returns {Set<string>} normalized SKU values that collide
+ */
+export function findDuplicateSkus(rows) {
+  const seen = new Map(); // normalized sku -> count
+  for (const row of rows) {
+    const sku = (row.sku ?? "").toString().trim().toLowerCase();
+    if (!sku) continue;
+    seen.set(sku, (seen.get(sku) ?? 0) + 1);
+  }
+  const duplicates = new Set();
+  for (const [sku, count] of seen) {
+    if (count > 1) duplicates.add(sku);
+  }
+  return duplicates;
+}
 
 /** Lowercase, strip punctuation, collapse whitespace — for comparison only. */
 export function normalizeHeader(header) {

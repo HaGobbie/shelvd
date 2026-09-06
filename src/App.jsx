@@ -24,6 +24,7 @@ import { useMapMarkers, useStoreDetails, useDebouncedSearchMatches } from "./hoo
 import { supabase } from "./config/supabaseClient";
 import { LanguageProvider, useLanguage } from "./i18n/LanguageContext";
 import { ThemeProvider, useTheme } from "./theme/ThemeContext";
+import ErrorBoundary from "./components/ErrorBoundary";
 
 import "./styles/App.css";
 
@@ -436,17 +437,21 @@ function AppShell() {
 
 /**
  * App
- * Wraps the actual app shell in LanguageProvider + ThemeProvider, so
- * every descendant (including MapContainer, SearchBar, StoreDetails,
- * OwnerDashboard) can call useLanguage()/useTheme() to read/set the
- * current language/theme.
+ * ErrorBoundary sits OUTSIDE both providers deliberately — it catches
+ * errors even if ThemeProvider or LanguageProvider themselves throw
+ * during initialization, not just errors from AppShell's own content.
+ * That's also why ErrorBoundary's fallback UI can't use useLanguage()
+ * (it might be rendering precisely because that provider crashed) — it
+ * reads the persisted language choice directly instead.
  */
 export default function App() {
   return (
-    <ThemeProvider>
-      <LanguageProvider>
-        <AppShell />
-      </LanguageProvider>
-    </ThemeProvider>
+    <ErrorBoundary>
+      <ThemeProvider>
+        <LanguageProvider>
+          <AppShell />
+        </LanguageProvider>
+      </ThemeProvider>
+    </ErrorBoundary>
   );
 }
