@@ -200,7 +200,7 @@ function formatStockLine(quantity, unit, language) {
   return `${qty} ${displayUnit}`;
 }
 
-function ProductCard({ product, onQuantityChange, onEdit, onDelete }) {
+function ProductCard({ product, onQuantityChange, onEdit, onDelete, tourId }) {
   const { t, language } = useLanguage();
   const [expanded, setExpanded] = useState(false);
   const [localSaved, setLocalSaved] = useState(false);
@@ -213,7 +213,7 @@ function ProductCard({ product, onQuantityChange, onEdit, onDelete }) {
   };
 
   return (
-    <motion.div className="product-card" layout
+    <motion.div className="product-card" data-tour-id={tourId} layout
       initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.97 }} transition={{ duration: 0.22 }}>
       <div className="product-card__header-row">
@@ -729,7 +729,7 @@ export default function OwnerDashboard({ session }) {
             <Plus size={16} strokeWidth={2} />
             <span>{t("owner.dashboard.addStore")}</span>
           </button>
-          <button type="button" className="dashboard-header__edit-store" onClick={() => setStoreEditOpen(true)}
+          <button type="button" className="dashboard-header__edit-store" data-tour-id="edit-store-btn" onClick={() => setStoreEditOpen(true)}
             aria-label={t("owner.dashboard.editStoreAria")} title={t("owner.dashboard.editStoreLabel")}>
             <Settings size={16} strokeWidth={2} />
             <span>{t("owner.dashboard.editStoreLabel")}</span>
@@ -771,6 +771,7 @@ export default function OwnerDashboard({ session }) {
           </button>
           <button
             type="button"
+            data-tour-id="help-btn"
             onClick={() => setOnboardingOpen(true)}
             aria-label={t("owner.onboarding.helpAria")}
             title={t("owner.onboarding.helpAria")}
@@ -802,6 +803,7 @@ export default function OwnerDashboard({ session }) {
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button
               type="button"
+              data-tour-id="bulk-import-btn"
               onClick={() => setBulkImportOpen(true)}
               style={{
                 display: "inline-flex", alignItems: "center", gap: 6, height: 44, padding: "0 16px",
@@ -816,6 +818,7 @@ export default function OwnerDashboard({ session }) {
             </button>
             <button
               type="button"
+              data-tour-id="new-transaction-btn"
               onClick={() => setNewTransactionOpen(true)}
               disabled={inventory.length === 0}
               style={{
@@ -828,7 +831,7 @@ export default function OwnerDashboard({ session }) {
               <ShoppingCart size={16} strokeWidth={2} />
               <span>{t("owner.dashboard.newTransaction")}</span>
             </button>
-            <button type="button" className="dashboard-add-btn" onClick={openAddModal}>
+            <button type="button" className="dashboard-add-btn" data-tour-id="add-product-btn" onClick={openAddModal}>
               <Plus size={18} strokeWidth={2.5} /> {t("owner.dashboard.addProduct")}
             </button>
           </div>
@@ -838,7 +841,7 @@ export default function OwnerDashboard({ session }) {
             list of entries), with CSV export available from inside that
             modal, rather than downloading blind with no way to preview
             or pick a different day/month first. */}
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+        <div data-tour-id="reports-toolbar" style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
           <button
             type="button"
             onClick={handleExportInventory}
@@ -904,8 +907,9 @@ export default function OwnerDashboard({ session }) {
 
         <div className="dashboard-product-list">
           <AnimatePresence>
-            {filteredInventory.map((product) => (
+            {filteredInventory.map((product, index) => (
               <ProductCard key={product.id} product={product}
+                tourId={index === 0 ? "first-product-card" : undefined}
                 onQuantityChange={handleQuantityChange} onEdit={openEditModal} onDelete={openDeleteModal} />
             ))}
           </AnimatePresence>
