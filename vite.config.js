@@ -22,8 +22,8 @@ export default defineConfig({
       registerType: "autoUpdate",
       includeAssets: ["favicon.svg"],
       manifest: {
-        name: "Barangay Product Finder",
-        short_name: "ProductFinder",
+        name: "Shelvd",
+        short_name: "Shelvd",
         description:
           "Find essential products at nearby stores in your barangay — real-time stock visibility.",
         theme_color: "#2c3e50",
