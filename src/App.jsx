@@ -25,6 +25,8 @@ import { supabase } from "./config/supabaseClient";
 import { LanguageProvider, useLanguage } from "./i18n/LanguageContext";
 import { ThemeProvider, useTheme } from "./theme/ThemeContext";
 import ErrorBoundary from "./components/ErrorBoundary";
+import OnboardingTour, { hasSeenTour } from "./components/OnboardingTour";
+import { MAP_TOUR_STEPS, MAP_TOUR_STORAGE_KEY } from "./tours/mapTourSteps";
 
 import "./styles/App.css";
 
@@ -212,6 +214,37 @@ function AppShell() {
 
   const resultCount = searchQuery.trim() ? searchMatches.size : 0;
 
+  // ─── Public map onboarding tour ─────────────────────────────────────────
+  // Auto-shows once per browser, the first time the map has actually
+  // loaded (not while the loading spinner is still up, and not for
+  // anyone mid-OAuth-redirect — this only runs on the public map route,
+  // which those states already gate above). Separate localStorage key
+  // and step content from the Owner Dashboard's tour — see
+  // src/tours/mapTourSteps.js.
+  const [mapTourOpen, setMapTourOpen] = useState(false);
+
+  useEffect(() => {
+    if (!loading && route !== "#/dashboard" && !hasSeenTour(MAP_TOUR_STORAGE_KEY)) {
+      setMapTourOpen(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, route]);
+
+  // Reuses the SAME button-label keys as the Owner Dashboard's tour
+  // (owner.onboarding.skip/next/back/done/stepCounter) — "Skip", "Next",
+  // "Back", "Got it!" are genuinely generic UI words with no
+  // owner-specific meaning, so this avoids duplicating four near-
+  // identical translation strings under a second namespace. Only the
+  // actual step titles/bodies differ (map.onboarding.* vs
+  // owner.onboarding.*), since those really are different content.
+  const mapTourLabels = {
+    skip: t("owner.onboarding.skip"),
+    next: t("owner.onboarding.next"),
+    back: t("owner.onboarding.back"),
+    done: t("owner.onboarding.done"),
+    stepCounter: (current, total) => t("owner.onboarding.stepCounter", current, total),
+  };
+
   // ─── Guard: still resolving auth, or this load started as an OAuth
   // redirect we haven't finished handling yet ───────────────────────────────
   // Uses the captured HAD_OAUTH_HASH_ON_LOAD flag (not a live hash
@@ -330,13 +363,18 @@ function AppShell() {
         selectedStoreId={selectedStoreId}
       />
 
-      {/* Floating search bar — sits above the map */}
-      <SearchBar
-        value={searchQuery}
-        onChange={handleSearchChange}
-        resultCount={resultCount}
-        loading={loading}
-      />
+      {/* Floating search bar — sits above the map. Wrapped in a plain div
+          carrying data-tour-id rather than modifying SearchBar.jsx
+          itself, since the tour engine just needs SOME DOM ancestor at
+          roughly the right screen position to anchor its highlight to. */}
+      <div data-tour-id="map-search-bar">
+        <SearchBar
+          value={searchQuery}
+          onChange={handleSearchChange}
+          resultCount={resultCount}
+          loading={loading}
+        />
+      </div>
 
       {/* Bottom sheet — slides up when a pin is tapped */}
       <StoreDetails
@@ -348,6 +386,7 @@ function AppShell() {
       {/* Owner Dashboard shortcut FAB */}
       <a
         href="#/dashboard"
+        data-tour-id="map-store-fab"
         aria-label="Open Store Owner Dashboard"
         style={{
           position: "fixed",
@@ -431,6 +470,14 @@ function AppShell() {
       >
         {theme === "dark" ? <Sun size={16} strokeWidth={2.2} /> : <Moon size={16} strokeWidth={2.2} />}
       </button>
+
+      <OnboardingTour
+        isOpen={mapTourOpen}
+        onClose={() => setMapTourOpen(false)}
+        steps={MAP_TOUR_STEPS}
+        storageKey={MAP_TOUR_STORAGE_KEY}
+        labels={mapTourLabels}
+      />
     </div>
   );
 }

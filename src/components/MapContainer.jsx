@@ -260,6 +260,7 @@ export default function MapContainer({
       {/* "Locate me" crosshair control */}
       <button
         type="button"
+        data-tour-id="map-locate-btn"
         onClick={requestLocation}
         aria-label={
           geoStatus === "loading" ? t("map.locating") : t("map.locateMe")

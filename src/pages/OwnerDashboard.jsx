@@ -54,7 +54,10 @@ import BulkImportModal from "../components/BulkImportModal";
 import NewTransactionModal from "../components/NewTransactionModal";
 import DailyTransactionsModal from "../components/DailyTransactionsModal";
 import MonthlyRevenueModal from "../components/MonthlyRevenueModal";
-import OnboardingTour, { hasSeenOnboarding } from "../components/OnboardingTour";
+import OnboardingTour, { hasSeenTour } from "../components/OnboardingTour";
+import { OWNER_TOUR_STEPS, OWNER_TOUR_STORAGE_KEY } from "../tours/ownerTourSteps";
+import WhatsNewModal from "../components/WhatsNewModal";
+import { CHANGELOG_VERSION, getLastSeenChangelogVersion, markChangelogSeen } from "../tours/changelog";
 import { exportCurrentInventoryCSV } from "../utils/csvExport";
 import { useLanguage } from "../i18n/LanguageContext";
 import { useTheme } from "../theme/ThemeContext";
@@ -640,19 +643,39 @@ export default function OwnerDashboard({ session }) {
   const [dailyModalOpen, setDailyModalOpen]   = useState(false);
   const [monthlyModalOpen, setMonthlyModalOpen] = useState(false);
   const [onboardingOpen, setOnboardingOpen]   = useState(false);
+  const [whatsNewOpen, setWhatsNewOpen]       = useState(false);
 
-  // Auto-show the tour once per browser, the first time the FULL
-  // dashboard (not the login screen, not the loading state, not the
-  // registration wizard) actually renders — checking this here rather
-  // than in a top-level effect means it naturally waits until there's
-  // something real on screen for the tour to describe, instead of
-  // popping up over a spinner or an empty registration form.
+  // Auto-show exactly ONE of these, the first time the FULL dashboard
+  // (not the login screen, not the loading state, not the registration
+  // wizard) actually renders:
+  //   - Brand-new owner (never seen the tour)  -> the onboarding tour.
+  //     Also immediately marks the CURRENT changelog version as seen,
+  //     since a first-time owner has no "before" to compare against —
+  //     showing them a "look what's new" popup right after they just
+  //     finished the tour explaining the current dashboard would be
+  //     redundant and confusing.
+  //   - Returning owner, tour already seen, but a newer changelog
+  //     version exists than what they last saw -> the What's New modal.
+  //   - Returning owner with nothing new -> neither.
   useEffect(() => {
-    if (user && storesChecked && !storesLoading && !hasSeenOnboarding()) {
+    if (!user || !storesChecked || storesLoading) return;
+
+    if (!hasSeenTour(OWNER_TOUR_STORAGE_KEY)) {
       setOnboardingOpen(true);
+      markChangelogSeen(CHANGELOG_VERSION);
+    } else if (getLastSeenChangelogVersion() < CHANGELOG_VERSION) {
+      setWhatsNewOpen(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, storesChecked, storesLoading]);
+
+  const tourLabels = {
+    skip: t("owner.onboarding.skip"),
+    next: t("owner.onboarding.next"),
+    back: t("owner.onboarding.back"),
+    done: t("owner.onboarding.done"),
+    stepCounter: (current, total) => t("owner.onboarding.stepCounter", current, total),
+  };
 
   const handleQuantityChange = async (productId, quantity, transactionType, notes = null) => {
     const { error } = await recordStockAdjustment(productId, quantity, transactionType, notes);
@@ -948,6 +971,13 @@ export default function OwnerDashboard({ session }) {
       <OnboardingTour
         isOpen={onboardingOpen}
         onClose={() => setOnboardingOpen(false)}
+        steps={OWNER_TOUR_STEPS}
+        storageKey={OWNER_TOUR_STORAGE_KEY}
+        labels={tourLabels}
+      />
+      <WhatsNewModal
+        isOpen={whatsNewOpen}
+        onClose={() => { setWhatsNewOpen(false); markChangelogSeen(CHANGELOG_VERSION); }}
       />
     </div>
   );
