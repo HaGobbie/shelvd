@@ -43,6 +43,7 @@ import {
   Sun,
   Moon,
   HelpCircle,
+  MoreVertical,
 } from "lucide-react";
 import { supabase } from "../config/supabaseClient";
 import { useMyStores, useOwnerInventory, deleteStore, formatLastUpdated, formatPrice, recordStockAdjustment } from "../hooks/useStores";
@@ -643,6 +644,7 @@ export default function OwnerDashboard({ session }) {
   const [dailyModalOpen, setDailyModalOpen]   = useState(false);
   const [monthlyModalOpen, setMonthlyModalOpen] = useState(false);
   const [onboardingOpen, setOnboardingOpen]   = useState(false);
+  const [headerMenuOpen, setHeaderMenuOpen]   = useState(false);
   const [whatsNewOpen, setWhatsNewOpen]       = useState(false);
 
   // Auto-show exactly ONE of these, the first time the FULL dashboard
@@ -737,47 +739,51 @@ export default function OwnerDashboard({ session }) {
   return (
     <div className="dashboard">
       <header className="dashboard-header">
-        <div className="dashboard-header__left">
-          <Store size={22} />
-          <div>
-            <h1 className="dashboard-header__title">{myStore?.name ?? t("owner.dashboard.myStore")}</h1>
-            <span className="dashboard-header__subtitle">
+        <div className="dashboard-header__left" style={{ minWidth: 0, flex: 1 }}>
+          <Store size={22} style={{ flexShrink: 0 }} />
+          <div style={{ minWidth: 0 }}>
+            <h1
+              className="dashboard-header__title"
+              style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+            >
+              {myStore?.name ?? t("owner.dashboard.myStore")}
+            </h1>
+            <span
+              className="dashboard-header__subtitle"
+              style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+            >
               {myStore?.type ? `${myStore.type} · ` : ""}{user.email}
             </span>
           </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", flexWrap: "wrap" }}>
+
+        {/* Compact controls — StoreSwitcher (only rendered at all when
+            there's more than one store), 3 small icon buttons, and a
+            single "⋮" menu for the less-frequent store-management
+            actions. This replaces what used to be 7-8 separate full-
+            width pill buttons crammed into this row, which wrapped
+            into a tall multi-line stack on narrow phones and visually
+            crowded the store name on the left — this stays a single
+            row on virtually any phone width. */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
           <StoreSwitcher stores={stores} selectedStoreId={selectedStoreId} onSelect={setSelectedStoreId} />
-          <button type="button" className="dashboard-header__edit-store" onClick={() => setAddingStore(true)}>
-            <Plus size={16} strokeWidth={2} />
-            <span>{t("owner.dashboard.addStore")}</span>
-          </button>
-          <button type="button" className="dashboard-header__edit-store" data-tour-id="edit-store-btn" onClick={() => setStoreEditOpen(true)}
-            aria-label={t("owner.dashboard.editStoreAria")} title={t("owner.dashboard.editStoreLabel")}>
-            <Settings size={16} strokeWidth={2} />
-            <span>{t("owner.dashboard.editStoreLabel")}</span>
-          </button>
-          <button type="button" className="dashboard-header__edit-store" onClick={() => setDeleteStoreConfirmOpen(true)}
-            aria-label={t("owner.dashboard.deleteStoreAria")} title={t("owner.dashboard.deleteStoreLabel")}
-            style={{ color: "var(--color-out)", borderColor: "var(--color-out-border)" }}>
-            <Trash2 size={16} strokeWidth={2} />
-            <span>{t("owner.dashboard.deleteStoreLabel")}</span>
-          </button>
+
           <button
             type="button"
             onClick={() => setLanguage(language === "en" ? "tl" : "en")}
             aria-label={t("common.language")}
             title={t("common.language")}
             style={{
-              display: "inline-flex", alignItems: "center", gap: 6, height: 36, padding: "0 12px",
-              borderRadius: "var(--radius-pill, 999px)", fontSize: 12, fontWeight: 700,
+              display: "inline-flex", alignItems: "center", justifyContent: "center",
+              height: 36, minWidth: 36, padding: "0 8px",
+              borderRadius: "var(--radius-pill, 999px)", fontSize: 11, fontWeight: 700,
               background: "rgba(255,255,255,0.12)", color: "#fff", border: "1px solid rgba(255,255,255,0.2)",
-              cursor: "pointer",
+              cursor: "pointer", flexShrink: 0,
             }}
           >
-            <Languages size={14} strokeWidth={2.2} />
             {language === "en" ? "TL" : "EN"}
           </button>
+
           <button
             type="button"
             onClick={toggleTheme}
@@ -785,13 +791,14 @@ export default function OwnerDashboard({ session }) {
             title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
             style={{
               display: "inline-flex", alignItems: "center", justifyContent: "center",
-              width: 36, height: 36, borderRadius: "50%",
+              width: 36, height: 36, borderRadius: "50%", flexShrink: 0,
               background: "rgba(255,255,255,0.12)", color: "#fff", border: "1px solid rgba(255,255,255,0.2)",
               cursor: "pointer",
             }}
           >
             {theme === "dark" ? <Sun size={15} strokeWidth={2.2} /> : <Moon size={15} strokeWidth={2.2} />}
           </button>
+
           <button
             type="button"
             data-tour-id="help-btn"
@@ -800,14 +807,115 @@ export default function OwnerDashboard({ session }) {
             title={t("owner.onboarding.helpAria")}
             style={{
               display: "inline-flex", alignItems: "center", justifyContent: "center",
-              width: 36, height: 36, borderRadius: "50%",
+              width: 36, height: 36, borderRadius: "50%", flexShrink: 0,
               background: "rgba(255,255,255,0.12)", color: "#fff", border: "1px solid rgba(255,255,255,0.2)",
               cursor: "pointer",
             }}
           >
             <HelpCircle size={16} strokeWidth={2.2} />
           </button>
-          <button className="dashboard-header__logout" onClick={() => supabase.auth.signOut()} type="button">{t("owner.dashboard.signOut")}</button>
+
+          {/* Overflow menu: Add Store / Edit Store / Delete Store / Sign Out */}
+          <div style={{ position: "relative", flexShrink: 0 }}>
+            <button
+              type="button"
+              onClick={() => setHeaderMenuOpen((v) => !v)}
+              aria-label={t("owner.dashboard.moreActionsAria")}
+              aria-expanded={headerMenuOpen}
+              style={{
+                display: "inline-flex", alignItems: "center", justifyContent: "center",
+                width: 36, height: 36, borderRadius: "50%",
+                background: "rgba(255,255,255,0.12)", color: "#fff", border: "1px solid rgba(255,255,255,0.2)",
+                cursor: "pointer",
+              }}
+            >
+              <MoreVertical size={16} strokeWidth={2.2} />
+            </button>
+
+            {headerMenuOpen && (
+              <>
+                {/* Invisible full-screen backdrop — click anywhere outside
+                    the dropdown to close it, same pattern used by every
+                    other overlay/sheet in this app. */}
+                <div
+                  onClick={() => setHeaderMenuOpen(false)}
+                  style={{ position: "fixed", inset: 0, zIndex: 150 }}
+                  aria-hidden="true"
+                />
+                <div
+                  role="menu"
+                  style={{
+                    position: "absolute",
+                    top: "calc(100% + 8px)",
+                    right: 0,
+                    zIndex: 151,
+                    minWidth: 200,
+                    background: "var(--color-surface)",
+                    borderRadius: 12,
+                    boxShadow: "var(--shadow-lg)",
+                    padding: 6,
+                    display: "flex",
+                    flexDirection: "column",
+                  }}
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => { setHeaderMenuOpen(false); setAddingStore(true); }}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 10, height: 44, padding: "0 12px",
+                      borderRadius: 8, border: "none", background: "none",
+                      color: "var(--color-text-primary)", fontSize: 13, fontWeight: 600,
+                      cursor: "pointer", textAlign: "left", width: "100%",
+                    }}
+                  >
+                    <Plus size={16} strokeWidth={2} /> {t("owner.dashboard.addStore")}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    data-tour-id="edit-store-btn"
+                    onClick={() => { setHeaderMenuOpen(false); setStoreEditOpen(true); }}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 10, height: 44, padding: "0 12px",
+                      borderRadius: 8, border: "none", background: "none",
+                      color: "var(--color-text-primary)", fontSize: 13, fontWeight: 600,
+                      cursor: "pointer", textAlign: "left", width: "100%",
+                    }}
+                  >
+                    <Settings size={16} strokeWidth={2} /> {t("owner.dashboard.editStoreLabel")}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => { setHeaderMenuOpen(false); setDeleteStoreConfirmOpen(true); }}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 10, height: 44, padding: "0 12px",
+                      borderRadius: 8, border: "none", background: "none",
+                      color: "var(--color-out)", fontSize: 13, fontWeight: 600,
+                      cursor: "pointer", textAlign: "left", width: "100%",
+                    }}
+                  >
+                    <Trash2 size={16} strokeWidth={2} /> {t("owner.dashboard.deleteStoreLabel")}
+                  </button>
+                  <div style={{ height: 1, background: "var(--color-border)", margin: "6px 4px" }} />
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => { setHeaderMenuOpen(false); supabase.auth.signOut(); }}
+                    style={{
+                      display: "flex", alignItems: "center", height: 44, padding: "0 12px",
+                      borderRadius: 8, border: "none", background: "none",
+                      color: "var(--color-text-secondary)", fontSize: 13, fontWeight: 600,
+                      cursor: "pointer", textAlign: "left", width: "100%",
+                    }}
+                  >
+                    {t("owner.dashboard.signOut")}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </header>
 

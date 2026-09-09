@@ -26,9 +26,10 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X, ChevronLeft, ChevronRight } from "lucide-react";
 import { useLanguage } from "../i18n/LanguageContext";
 
-const TOOLTIP_WIDTH = 300;
+const TOOLTIP_WIDTH = 280;
 const TOOLTIP_EST_HEIGHT = 210; // rough estimate for above/below placement math
 const GAP = 16; // space between the highlight ring and the tooltip
+const EDGE_MARGIN = 14; // minimum clearance from any viewport edge
 
 /**
  * markTourSeen / hasSeenTour
@@ -99,10 +100,10 @@ function computeTooltipPlacement(rect) {
 
   const top = placeBelow
     ? rect.top + rect.height + GAP
-    : Math.max(12, rect.top - TOOLTIP_EST_HEIGHT - GAP);
+    : Math.max(EDGE_MARGIN, rect.top - TOOLTIP_EST_HEIGHT - GAP);
 
   let left = rect.left + rect.width / 2 - TOOLTIP_WIDTH / 2;
-  left = Math.max(12, Math.min(left, viewportW - TOOLTIP_WIDTH - 12));
+  left = Math.max(EDGE_MARGIN, Math.min(left, viewportW - TOOLTIP_WIDTH - EDGE_MARGIN));
 
   return { top, left, placeBelow };
 }
@@ -296,6 +297,8 @@ export default function OnboardingTour({ isOpen, onClose, steps, storageKey, lab
               top: placement.top,
               left: placement.left,
               width: TOOLTIP_WIDTH,
+              maxHeight: "calc(100dvh - 28px)",
+              overflowY: "auto",
               zIndex: 2002,
               background: "var(--color-surface)",
               borderRadius: 14,
@@ -315,11 +318,28 @@ export default function OnboardingTour({ isOpen, onClose, steps, storageKey, lab
           exit="exit"
           onClick={(e) => e.stopPropagation()}
           style={{
+            // Centered via fixed inset + margin: auto — NOT transform.
+            // Framer Motion writes its own animated transform (for this
+            // card's scale animation) directly as an inline style at
+            // runtime, which silently overrides ANY other transform
+            // value the instant the animation runs. A card centered via
+            // translate(-50%,-50%) combined with a Framer Motion scale
+            // animation loses that centering the moment it animates,
+            // leaving its top-left corner sitting at screen-center
+            // instead of the box being centered — this is what was
+            // actually causing the "clipped to the right" bug. Centering
+            // via inset+margin:auto uses no transform at all, so
+            // there's nothing for Framer Motion to conflict with.
             position: "fixed",
-            top: "50%",
-            left: "50%",
-            transform: "translate(-50%, -50%)",
-            width: "min(340px, calc(100vw - 40px))",
+            top: 0,
+            right: 0,
+            bottom: 0,
+            left: 0,
+            margin: "auto",
+            width: "min(340px, calc(100vw - 32px))",
+            height: "fit-content",
+            maxHeight: "calc(100dvh - 32px)",
+            overflowY: "auto",
             zIndex: 2002,
             background: "var(--color-surface)",
             borderRadius: 18,

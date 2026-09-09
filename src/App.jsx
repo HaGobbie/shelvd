@@ -363,18 +363,23 @@ function AppShell() {
         selectedStoreId={selectedStoreId}
       />
 
-      {/* Floating search bar — sits above the map. Wrapped in a plain div
-          carrying data-tour-id rather than modifying SearchBar.jsx
-          itself, since the tour engine just needs SOME DOM ancestor at
-          roughly the right screen position to anchor its highlight to. */}
-      <div data-tour-id="map-search-bar">
-        <SearchBar
-          value={searchQuery}
-          onChange={handleSearchChange}
-          resultCount={resultCount}
-          loading={loading}
-        />
-      </div>
+      {/* Floating search bar — sits above the map. NOTE: no data-tour-id
+          wrapper here anymore — SearchBar.jsx positions itself via
+          absolute/fixed CSS internally, which escapes a plain wrapping
+          div's normal-flow box entirely (an absolutely-positioned child
+          contributes nothing to its non-positioned parent's size), so a
+          wrapper here would report a bounding box that has nothing to do
+          with where the search bar actually renders — exactly what
+          caused the tour's "search" step to highlight the wrong area.
+          That step now uses a centered card instead (see
+          mapTourSteps.js) until SearchBar.jsx itself can carry the
+          attribute on its real positioned root element. */}
+      <SearchBar
+        value={searchQuery}
+        onChange={handleSearchChange}
+        resultCount={resultCount}
+        loading={loading}
+      />
 
       {/* Bottom sheet — slides up when a pin is tapped */}
       <StoreDetails
@@ -411,14 +416,15 @@ function AppShell() {
         <Store size={22} />
       </a>
 
-      {/* Language toggle — EN/TL. Placed top-left, clear of the search
-          bar (which spans the top, centered) and the locate-me/dashboard
-          controls stacked bottom-right. */}
-      <button
-        type="button"
-        onClick={() => setLanguage(language === "en" ? "tl" : "en")}
-        aria-label={t("common.language")}
-        title={t("common.language")}
+      {/* Language + theme toggles — a single horizontal row, top-left,
+          ABOVE the search bar (which now starts lower — see
+          --searchbar-top in App.css). These two used to be stacked
+          vertically at the same left edge the search bar itself starts
+          from, which visually overlapped the search bar's input text on
+          narrow phones — there was nowhere for a second stacked row to
+          go without colliding with search bar. Side-by-side, both fit
+          within the space now reserved above the search bar instead. */}
+      <div
         style={{
           position: "fixed",
           top: "calc(16px + env(safe-area-inset-top, 0px))",
@@ -426,50 +432,57 @@ function AppShell() {
           zIndex: 800,
           display: "flex",
           alignItems: "center",
-          gap: 6,
-          height: 40,
-          padding: "0 14px",
-          borderRadius: "var(--radius-pill, 999px)",
-          background: "var(--color-surface)",
-          color: "var(--color-text-primary)",
-          border: "none",
-          boxShadow: "var(--shadow-md)",
-          fontSize: 13,
-          fontWeight: 700,
-          cursor: "pointer",
+          gap: 8,
         }}
       >
-        <Languages size={16} strokeWidth={2.2} />
-        {language === "en" ? "TL" : "EN"}
-      </button>
+        <button
+          type="button"
+          onClick={() => setLanguage(language === "en" ? "tl" : "en")}
+          aria-label={t("common.language")}
+          title={t("common.language")}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            height: 40,
+            padding: "0 14px",
+            borderRadius: "var(--radius-pill, 999px)",
+            background: "var(--color-surface)",
+            color: "var(--color-text-primary)",
+            border: "none",
+            boxShadow: "var(--shadow-md)",
+            fontSize: 13,
+            fontWeight: 700,
+            cursor: "pointer",
+          }}
+        >
+          <Languages size={16} strokeWidth={2.2} />
+          {language === "en" ? "TL" : "EN"}
+        </button>
 
-      {/* Dark/light toggle — stacked right below the language toggle,
-          same top-left corner, clear of everything else. */}
-      <button
-        type="button"
-        onClick={toggleTheme}
-        aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-        title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-        style={{
-          position: "fixed",
-          top: "calc(64px + env(safe-area-inset-top, 0px))",
-          left: 16,
-          zIndex: 800,
-          width: 40,
-          height: 40,
-          borderRadius: "50%",
-          background: "var(--color-surface)",
-          color: "var(--color-text-primary)",
-          border: "none",
-          boxShadow: "var(--shadow-md)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          cursor: "pointer",
-        }}
-      >
-        {theme === "dark" ? <Sun size={16} strokeWidth={2.2} /> : <Moon size={16} strokeWidth={2.2} />}
-      </button>
+        <button
+          type="button"
+          onClick={toggleTheme}
+          aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          style={{
+            width: 40,
+            height: 40,
+            borderRadius: "50%",
+            background: "var(--color-surface)",
+            color: "var(--color-text-primary)",
+            border: "none",
+            boxShadow: "var(--shadow-md)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "pointer",
+            flexShrink: 0,
+          }}
+        >
+          {theme === "dark" ? <Sun size={16} strokeWidth={2.2} /> : <Moon size={16} strokeWidth={2.2} />}
+        </button>
+      </div>
 
       <OnboardingTour
         isOpen={mapTourOpen}

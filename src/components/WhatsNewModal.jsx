@@ -49,13 +49,23 @@ export default function WhatsNewModal({ isOpen, onClose }) {
             aria-modal="true"
             aria-label={t("owner.whatsNew.title")}
             style={{
+              // Centered via fixed inset + margin: auto — NOT transform.
+              // cardVariants animates y/scale, and Framer Motion writes
+              // that as an inline transform at runtime, which silently
+              // overrode translate(-50%,-50%) here — this is what was
+              // actually causing the modal to render off-screen/clipped
+              // instead of centered. No transform here means nothing
+              // for Framer Motion's own animated transform to conflict with.
               position: "fixed",
-              top: "50%",
-              left: "50%",
-              transform: "translate(-50%, -50%)",
+              top: 0,
+              right: 0,
+              bottom: 0,
+              left: 0,
+              margin: "auto",
               zIndex: 1501,
-              width: "min(380px, calc(100vw - 40px))",
-              maxHeight: "80dvh",
+              width: "min(380px, calc(100vw - 32px))",
+              height: "fit-content",
+              maxHeight: "calc(100dvh - 32px)",
               overflowY: "auto",
               background: "var(--color-surface)",
               borderRadius: 20,

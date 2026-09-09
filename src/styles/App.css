@@ -111,7 +111,7 @@
 
   /* Map */
   --map-height-mobile: calc(100dvh - 0px);
-  --searchbar-top: 16px;
+  --searchbar-top: calc(70px + env(safe-area-inset-top, 0px));
   --sheet-max-height: 82dvh;
   --sheet-border-radius: 20px;
 }
@@ -1242,16 +1242,37 @@ html[data-theme="dark"] .pform__select {
    ══════════════════════════════════════════════════════════════════════════ */
 
 .confirm-dialog {
+  /* Centered via fixed inset + margin: auto — NOT transform. Framer
+     Motion writes its own animated transform (for scale/x/y) directly
+     as an inline style at runtime, which silently overrides ANY other
+     transform value (CSS class or inline) the instant the animation
+     runs, since that's just how the CSS cascade works. A dialog
+     centered via transform: translate(-50%,-50%) combined with a
+     Framer Motion scale/y animation loses that centering the moment it
+     animates, leaving its top-left corner sitting at the anchor point
+     instead of the box being centered on it — this is what was
+     actually causing dialogs to render clipped toward the bottom-right
+     instead of centered. Centering via inset+margin:auto uses no
+     transform at all, so there's nothing for Framer Motion to conflict
+     with.
+     max-height/overflow-y guard against a very short viewport
+     (landscape phone, split-screen) where the dialog might otherwise
+     exceed the visible height. */
   position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  margin: auto;
   z-index: 1101;
   background: var(--color-surface);
   border-radius: var(--radius-xl);
   padding: var(--space-8) var(--space-6);
   width: calc(100% - 40px);
   max-width: 360px;
+  height: fit-content;
+  max-height: calc(100dvh - 40px);
+  overflow-y: auto;
   box-shadow: var(--shadow-lg);
   display: flex;
   flex-direction: column;

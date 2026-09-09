@@ -43,6 +43,28 @@ export function ThemeProvider({ children }) {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
 
+  // Keep the browser/OS status bar color (Android's notification bar,
+  // and iOS Safari's toolbar) in sync with the current theme. Without
+  // this, index.html's <meta name="theme-color"> stays permanently
+  // fixed at whatever static color was in the HTML source — it doesn't
+  // update on its own just because the page's own content switched to
+  // dark mode. This runs on every theme change (including the very
+  // first render), so it overwrites that static starting value
+  // immediately regardless of what it originally was.
+  useEffect(() => {
+    let meta = document.querySelector('meta[name="theme-color"]');
+    if (!meta) {
+      meta = document.createElement("meta");
+      meta.setAttribute("name", "theme-color");
+      document.head.appendChild(meta);
+    }
+    // Matches --color-stone-dark / --color-stone-darker from App.css —
+    // the same dark structural color already used for headers/login
+    // regardless of theme, so the status bar blends with the app's own
+    // chrome rather than introducing a third, unrelated color.
+    meta.setAttribute("content", theme === "dark" ? "#1c1917" : "#292524");
+  }, [theme]);
+
   // Live-follow the system preference for as long as the person hasn't
   // explicitly overridden it.
   useEffect(() => {
