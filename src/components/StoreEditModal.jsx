@@ -157,6 +157,7 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
   const [facebookUrl, setFacebookUrl]   = useState("");
   const [instagramUrl, setInstagramUrl] = useState("");
   const [tiktokUrl, setTiktokUrl]       = useState("");
+  const [googleMapsUrl, setGoogleMapsUrl] = useState("");
 
   // ── UI state ──────────────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery]   = useState("");
@@ -181,6 +182,7 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
       setFacebookUrl(store.facebookUrl ?? "");
       setInstagramUrl(store.instagramUrl ?? "");
       setTiktokUrl(store.tiktokUrl ?? "");
+      setGoogleMapsUrl(store.googleMapsUrl ?? "");
       setSearchQuery(store.address ?? "");
       setActiveTab("details");
       setErrors({});
@@ -208,6 +210,7 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
     if (!isValidUrl(facebookUrl))  errs.facebookUrl  = t("owner.storeEdit.invalidUrl");
     if (!isValidUrl(instagramUrl)) errs.instagramUrl = t("owner.storeEdit.invalidUrl");
     if (!isValidUrl(tiktokUrl))    errs.tiktokUrl    = t("owner.storeEdit.invalidUrl");
+    if (!isValidUrl(googleMapsUrl)) errs.googleMapsUrl = t("owner.storeEdit.invalidUrl");
     return errs;
   };
 
@@ -261,7 +264,7 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
       // Jump to whichever tab actually has the problem, so the person
       // isn't left staring at "Details" wondering why Save won't work.
       if (errs.coords) setActiveTab("location");
-      else if (errs.facebookUrl || errs.instagramUrl || errs.tiktokUrl) setActiveTab("socials");
+      else if (errs.facebookUrl || errs.instagramUrl || errs.tiktokUrl || errs.googleMapsUrl) setActiveTab("socials");
       return;
     }
 
@@ -284,6 +287,7 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
         facebook_url:   facebookUrl.trim() || null,
         instagram_url:  instagramUrl.trim() || null,
         tiktok_url:     tiktokUrl.trim() || null,
+        google_maps_url: googleMapsUrl.trim() || null,
       })
       .eq("id", store.id);
 
@@ -365,7 +369,7 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
                   {id === "location" && errors.coords && (
                     <span className="stedit__tab-error-dot" aria-label="Has errors" />
                   )}
-                  {id === "socials" && (errors.facebookUrl || errors.instagramUrl || errors.tiktokUrl) && (
+                  {id === "socials" && (errors.facebookUrl || errors.instagramUrl || errors.tiktokUrl || errors.googleMapsUrl) && (
                     <span className="stedit__tab-error-dot" aria-label="Has errors" />
                   )}
                 </button>
@@ -601,6 +605,27 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
                       maxLength={300}
                     />
                     {errors.tiktokUrl && <span className="regform__field-error"><AlertTriangle size={12} /> {errors.tiktokUrl}</span>}
+                  </div>
+
+                  <div style={{ height: 1, background: "var(--color-border)", margin: "20px 0" }} />
+
+                  <p style={{ fontSize: "var(--text-sm)", color: "var(--color-text-secondary)", marginBottom: "var(--space-4)", lineHeight: 1.6 }}>
+                    {t("owner.storeEdit.googleMapsHint")}
+                  </p>
+
+                  <div className="regform__field">
+                    <label className="regform__label" htmlFor="se-google-maps">{t("owner.storeEdit.googleMapsLabel")}</label>
+                    <input
+                      id="se-google-maps"
+                      className={`pform__input ${errors.googleMapsUrl ? "pform__input--error" : ""}`}
+                      type="url"
+                      inputMode="url"
+                      placeholder="https://maps.app.goo.gl/..."
+                      value={googleMapsUrl}
+                      onChange={(e) => { setGoogleMapsUrl(e.target.value); setErrors((p) => ({ ...p, googleMapsUrl: undefined })); }}
+                      maxLength={300}
+                    />
+                    {errors.googleMapsUrl && <span className="regform__field-error"><AlertTriangle size={12} /> {errors.googleMapsUrl}</span>}
                   </div>
                 </div>
               )}

@@ -40,6 +40,7 @@ function mapStoreRow(row) {
     facebookUrl: row.facebook_url ?? null,
     instagramUrl: row.instagram_url ?? null,
     tiktokUrl: row.tiktok_url ?? null,
+    googleMapsUrl: row.google_maps_url ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -183,7 +184,7 @@ export function useStoreDetails(storeId) {
         supabase
           .from("stores")
           .select(
-            "id, name, type, address, owner_name, contact_number, owner_id, owner_email, latitude, longitude, status, worst_status, facebook_url, instagram_url, tiktok_url, updated_at"
+            "id, name, type, address, owner_name, contact_number, owner_id, owner_email, latitude, longitude, status, worst_status, facebook_url, instagram_url, tiktok_url, google_maps_url, updated_at"
           )
           .eq("id", storeId)
           .single(),
@@ -259,7 +260,7 @@ export function useMyStores(userId) {
     const { data, error } = await supabase
       .from("stores")
       .select(
-        "id, name, type, address, owner_name, contact_number, owner_id, owner_email, latitude, longitude, status, worst_status, rejection_reason, facebook_url, instagram_url, tiktok_url, created_at, updated_at"
+        "id, name, type, address, owner_name, contact_number, owner_id, owner_email, latitude, longitude, status, worst_status, rejection_reason, facebook_url, instagram_url, tiktok_url, google_maps_url, created_at, updated_at"
       )
       .eq("owner_id", userId)
       .order("created_at", { ascending: true });

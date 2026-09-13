@@ -14,7 +14,7 @@
 //      instead of running its own separate getSession() round trip.
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { Store, Languages, Sun, Moon } from "lucide-react";
+import { Store, Languages, Sun, Moon, HelpCircle } from "lucide-react";
 
 import MapContainer from "./components/MapContainer";
 import SearchBar from "./components/SearchBar";
@@ -481,6 +481,29 @@ function AppShell() {
           }}
         >
           {theme === "dark" ? <Sun size={16} strokeWidth={2.2} /> : <Moon size={16} strokeWidth={2.2} />}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setMapTourOpen(true)}
+          aria-label={t("map.onboarding.helpAria")}
+          title={t("map.onboarding.helpAria")}
+          style={{
+            width: 40,
+            height: 40,
+            borderRadius: "50%",
+            background: "var(--color-surface)",
+            color: "var(--color-text-primary)",
+            border: "none",
+            boxShadow: "var(--shadow-md)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "pointer",
+            flexShrink: 0,
+          }}
+        >
+          <HelpCircle size={17} strokeWidth={2.2} />
         </button>
       </div>
 

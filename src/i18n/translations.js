@@ -37,6 +37,7 @@ export const translations = {
         step3Body: "Tap here to center the map on where you are, so you can see what's closest.",
         step4Title: "Own a Store?",
         step4Body: "Tap this button to register your store and start managing your own inventory.",
+        helpAria: "Show tutorial",
       },
     },
     storeDetails: {
@@ -44,6 +45,7 @@ export const translations = {
       matchingProducts: (n) => `${n} matching product${n !== 1 ? "s" : ""} for`,
       notListed: (q) => `"${q}" is not listed at this store.`,
       getDirections: "Get Directions",
+      viewOnGoogleMaps: "View on Google Maps",
       close: "Close store details",
     },
     status: {
@@ -151,6 +153,8 @@ export const translations = {
         tiktokLabel: "TikTok Profile",
         socialUrlPlaceholder: "https://...",
         invalidUrl: "This doesn't look like a valid link — it should start with http:// or https://",
+        googleMapsHint: "Optional — already have your store listed on Google Maps? Paste the share link here. Residents will get a \"View on Google Maps\" button on your store's page, in addition to Shelvd's own directions.",
+        googleMapsLabel: "Google Maps Link",
       },
       registration: {
         title: "Register Your Store",
@@ -399,6 +403,7 @@ export const translations = {
         step3Body: "Pindutin dito para i-center ang mapa sa iyong kinaroroonan, para makita mo kung ano ang pinakamalapit.",
         step4Title: "May Sarili Kang Tindahan?",
         step4Body: "Pindutin ang button na ito para irehistro ang iyong tindahan at simulan ang pamamahala ng sarili mong imbentaryo.",
+        helpAria: "Ipakita ang tutorial",
       },
     },
     storeDetails: {
@@ -406,6 +411,7 @@ export const translations = {
       matchingProducts: (n) => `${n} produktong tumutugma para sa`,
       notListed: (q) => `Wala sa listahan ng tindahang ito ang "${q}".`,
       getDirections: "Kumuha ng Direksyon",
+      viewOnGoogleMaps: "Tingnan sa Google Maps",
       close: "Isara ang detalye ng tindahan",
     },
     status: {
@@ -507,6 +513,8 @@ export const translations = {
         tiktokLabel: "TikTok Profile",
         socialUrlPlaceholder: "https://...",
         invalidUrl: "Mukhang hindi ito wastong link — dapat magsimula ito sa http:// o https://",
+        googleMapsHint: "Opsyonal — nakalista na ba ang iyong tindahan sa Google Maps? I-paste ang share link dito. Makakakita ang mga residente ng \"View on Google Maps\" button sa pahina ng iyong tindahan, bukod pa sa direksyon mula sa Shelvd mismo.",
+        googleMapsLabel: "Link sa Google Maps",
       },
       registration: {
         title: "Irehistro ang Iyong Tindahan",

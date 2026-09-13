@@ -26,8 +26,19 @@ export default defineConfig({
         short_name: "Shelvd",
         description:
           "Find essential products at nearby stores in your barangay — real-time stock visibility.",
-        theme_color: "#2c3e50",
-        background_color: "#1a252f",
+        // Matches --color-stone-dark / --color-stone-darker from
+        // src/styles/App.css — these were still the OLD pre-rebrand
+        // navy (#2c3e50 / #1a252f) until now. This is what an INSTALLED
+        // PWA actually reads for its status bar and splash-screen
+        // background — it's baked into the generated manifest.webmanifest
+        // at BUILD time, not read live from index.html's own <meta
+        // name="theme-color"> tag (that tag only affects an open browser
+        // tab; ThemeContext.jsx already keeps that one in sync with the
+        // live light/dark toggle — see src/theme/ThemeContext.jsx).
+        // Existing installed users pick this up automatically once this
+        // rebuilds and redeploys, thanks to registerType: "autoUpdate" below.
+        theme_color: "#292524",
+        background_color: "#1c1917",
         display: "standalone",
         orientation: "portrait-primary",
         // GitHub Pages serves from a sub-path, so start_url/scope must
@@ -42,8 +53,12 @@ export default defineConfig({
       workbox: {
         runtimeCaching: [
           {
+            // Matches BOTH light_all and dark_all — dark mode was added
+            // after this rule was originally written for light_all only,
+            // so dark-theme users were getting no caching benefit for
+            // their map tiles at all until this was broadened.
             urlPattern:
-              /^https:\/\/[a-d]\.basemaps\.cartocdn\.com\/light_all\/.*/,
+              /^https:\/\/[a-d]\.basemaps\.cartocdn\.com\/(light_all|dark_all)\/.*/,
             handler: "CacheFirst",
             options: {
               cacheName: "map-tiles",

@@ -6,9 +6,10 @@
 
 import React, { useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, MapPin, Phone, Clock, Package, Navigation } from "lucide-react";
+import { X, MapPin, Phone, Clock, Package, Navigation, ExternalLink } from "lucide-react";
 import { formatLastUpdated, formatPrice } from "../hooks/useStores";
 import { useLanguage } from "../i18n/LanguageContext";
+import { buildGoogleMapsViewLink } from "../utils/googleMapsLink";
 
 // ─── Status badge config ──────────────────────────────────────────────────────
 // Colors reference CSS custom properties (defined in :root, App.css)
@@ -293,6 +294,31 @@ export default function StoreDetails({ store, searchQuery = "", onClose }) {
                 >
                   <Navigation size={14} />
                   <span>{t("storeDetails.getDirections")}</span>
+                </a>
+              )}
+
+              {/* Owner-provided Google Maps link — a SEPARATE, optional
+                  option alongside the directions link above, not a
+                  replacement for it. Shelvd's own directions use the
+                  store's registered GIS pin (precise, always present);
+                  this uses whatever the owner's own Google Business/Maps
+                  listing shows, which might carry extra context (photos,
+                  reviews, hours) Shelvd doesn't track — residents get
+                  the choice, not a forced pick between the two. */}
+              {store?.googleMapsUrl && (
+                <a
+                  className="sheet-meta__item"
+                  href={buildGoogleMapsViewLink(store.googleMapsUrl)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    color: "var(--color-text-secondary)",
+                    fontWeight: 600,
+                    textDecoration: "none",
+                  }}
+                >
+                  <ExternalLink size={14} />
+                  <span>{t("storeDetails.viewOnGoogleMaps")}</span>
                 </a>
               )}
 
