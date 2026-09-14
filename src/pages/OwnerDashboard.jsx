@@ -3,10 +3,16 @@
 //   ✅ Google Sign-In + Email/Password login (Supabase Auth)
 //   ✅ Auto-routing: no stores found → StoreRegistrationForm
 //   ✅ MULTI-STORE support: switch between stores, add/delete a store
-//   ✅ Inventory management available immediately regardless of approval
-//      status — a non-blocking banner informs instead of locking out
+//   ✅ FRICTIONLESS: no more barangay-approval gate. Stores are approved
+//      immediately on registration (see StoreRegistrationForm.jsx and
+//      sql/021_frictionless_registration_and_services.sql) — the old
+//      non-blocking ApprovalBanner and its pending/rejected copy are
+//      gone since there's nothing left for them to report.
 //   ✅ Real-time Inventory listener (Supabase Realtime, scoped to store)
-//   ✅ Add, Edit, Delete products; quantity quick-adjust
+//   ✅ Add, Edit, Delete products; quantity quick-adjust (or a 1-tap
+//      Available/Unavailable switch for service products — is_service)
+//   ✅ Neighborhood Demand + Daily Cash-Out metric cards for immediate,
+//      no-setup value on day one
 //   ✅ Full Tagalog translation via useLanguage()/t()
 //
 // STATUS AUTOMATION: the old StatusRadioGroup quick-toggle is GONE. It
@@ -44,9 +50,11 @@ import {
   Moon,
   HelpCircle,
   MoreVertical,
+  Users,
+  Wallet,
 } from "lucide-react";
 import { supabase } from "../config/supabaseClient";
-import { useMyStores, useOwnerInventory, deleteStore, formatLastUpdated, formatPrice, recordStockAdjustment } from "../hooks/useStores";
+import { useMyStores, useOwnerInventory, deleteStore, formatLastUpdated, formatPrice, recordStockAdjustment, fetchNeighborhoodDemand, fetchDailyTransactions } from "../hooks/useStores";
 import ProductFormModal from "../components/ProductFormModal";
 import ConfirmDeleteModal from "../components/ConfirmDeleteModal";
 import StoreRegistrationForm from "../components/StoreRegistrationForm";
@@ -189,6 +197,70 @@ function QuantityStepper({ product, onChange }) {
   );
 }
 
+/**
+ * ServiceAvailabilityToggle
+ * The service-product equivalent of QuantityStepper — a service (Water
+ * Refill, E-Load, LPG / Cooking Gas, Ice — is_service) doesn't have a
+ * meaningful stock count, so this renders a single 1-tap Available/
+ * Unavailable switch instead of +/- buttons. Maps straight to quantity
+ * 999/0 (see ProductFormModal.jsx header for why that's enough — the
+ * existing status-derivation trigger handles the rest). Skips the
+ * decrease-reason prompt entirely, same reasoning as the form modal:
+ * there's no spoilage/personal-use concept for a service going dark.
+ */
+function ServiceAvailabilityToggle({ product, onChange }) {
+  const { t } = useLanguage();
+  const [pending, setPending] = useState(false);
+  const isAvailable = (product.quantity ?? 0) > 0;
+
+  const handleToggle = async (nextAvailable) => {
+    if (nextAvailable === isAvailable || pending) return;
+    setPending(true);
+    await onChange(
+      product.id,
+      nextAvailable ? 999 : 0,
+      nextAvailable ? "restocked" : "other",
+      nextAvailable ? null : "Marked unavailable"
+    );
+    setPending(false);
+  };
+
+  return (
+    <div style={{ display: "flex", borderRadius: "var(--radius-pill, 999px)", overflow: "hidden", border: "1.5px solid var(--color-border)", marginTop: 8 }}>
+      <button
+        type="button"
+        onClick={() => handleToggle(true)}
+        disabled={pending}
+        aria-pressed={isAvailable}
+        style={{
+          flex: 1, minHeight: 40, border: "none", cursor: "pointer",
+          fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center",
+          justifyContent: "center", gap: 6,
+          background: isAvailable ? "var(--color-available)" : "var(--color-surface)",
+          color: isAvailable ? "#fff" : "var(--color-text-secondary)",
+        }}
+      >
+        <PackageCheck size={14} /> {t("owner.product.markAvailable")}
+      </button>
+      <button
+        type="button"
+        onClick={() => handleToggle(false)}
+        disabled={pending}
+        aria-pressed={!isAvailable}
+        style={{
+          flex: 1, minHeight: 40, border: "none", cursor: "pointer",
+          fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center",
+          justifyContent: "center", gap: 6,
+          background: !isAvailable ? "var(--color-out)" : "var(--color-surface)",
+          color: !isAvailable ? "#fff" : "var(--color-text-secondary)",
+        }}
+      >
+        <PackageX size={14} /> {t("owner.product.markUnavailable")}
+      </button>
+    </div>
+  );
+}
+
 // Units where "15 packs" reads naturally with a trailing "s"; metric
 // units (kg, g, liter, ml) don't pluralize the same way in everyday use,
 // so they're deliberately left alone. (Tagalog doesn't pluralize nouns
@@ -216,6 +288,10 @@ function ProductCard({ product, onQuantityChange, onEdit, onDelete, tourId }) {
     setTimeout(() => setLocalSaved(false), 1800);
   };
 
+  const stockLine = product.isService
+    ? ((product.quantity ?? 0) > 0 ? t("owner.product.markAvailable") : t("owner.product.markUnavailable"))
+    : formatStockLine(product.quantity, product.unit, language);
+
   return (
     <motion.div className="product-card" data-tour-id={tourId} layout
       initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
@@ -229,7 +305,7 @@ function ProductCard({ product, onQuantityChange, onEdit, onDelete, tourId }) {
               {product.category} · <strong style={{ color: "var(--color-text-primary)" }}>{formatPrice(product.price)}</strong>
             </span>
             <span className="product-card__stock-line" style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
-              {formatStockLine(product.quantity, product.unit, language)}
+              {stockLine}
             </span>
           </div>
           <div className="product-card__right">
@@ -282,8 +358,10 @@ function ProductCard({ product, onQuantityChange, onEdit, onDelete, tourId }) {
                 </p>
               )}
             </div>
-            <QuantityStepper product={product} onChange={handleQuantityChange} />
-          </motion.div>
+            {product.isService
+              ? <ServiceAvailabilityToggle product={product} onChange={handleQuantityChange} />
+              : <QuantityStepper product={product} onChange={handleQuantityChange} />}
+            </motion.div>
         )}
       </AnimatePresence>
     </motion.div>
@@ -471,29 +549,124 @@ function LoginScreen() {
   );
 }
 
-// ─── Non-blocking approval status banner ─────────────────────────────────────
-function ApprovalBanner({ store }) {
+// ─── Neighborhood Demand metric card ──────────────────────────────────────────
+// Shows a store owner that residents are actually searching for what they
+// sell, before they've made a single sale — see fetchNeighborhoodDemand()
+// in useStores.js and the Part 5 caveats in
+// sql/021_frictionless_registration_and_services.sql for exactly what
+// this counts (app-wide category-matched searches, not a literal GPS
+// radius around the store).
+function NeighborhoodDemandCard({ storeId }) {
   const { t } = useLanguage();
-  if (store.status === "approved") return null;
+  const [count, setCount] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-  const isRejected = store.status === "rejected";
+  useEffect(() => {
+    if (!storeId) return;
+    let cancelled = false;
+    setLoading(true);
+    fetchNeighborhoodDemand(storeId, 7).then((n) => {
+      if (!cancelled) { setCount(n); setLoading(false); }
+    });
+    return () => { cancelled = true; };
+  }, [storeId]);
+
   return (
-    <div
-      style={{
-        display: "flex", alignItems: "center", gap: 10,
-        padding: "10px 16px", borderRadius: "var(--radius-md, 8px)",
-        marginBottom: 16, fontSize: 13, fontWeight: 600,
-        background: isRejected ? "var(--color-out-bg)" : "var(--color-low-bg)",
-        border: `1px solid ${isRejected ? "var(--color-out-border)" : "var(--color-low-border)"}`,
-        color: isRejected ? "var(--color-out)" : "var(--color-low)",
-      }}
-    >
-      {isRejected ? <AlertTriangle size={16} /> : <Clock size={16} />}
-      <span>
-        {isRejected
-          ? t("owner.dashboard.approvalRejected", store.rejectionReason)
-          : t("owner.dashboard.approvalPending")}
-      </span>
+    <div className="metric-card" style={{
+      display: "flex", alignItems: "center", gap: 12,
+      padding: "14px 16px", borderRadius: "var(--radius-md, 10px)",
+      border: "1px solid var(--color-border)", background: "var(--color-surface)",
+      marginBottom: 10,
+    }}>
+      <div style={{
+        width: 40, height: 40, borderRadius: "50%", flexShrink: 0,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        background: "var(--color-available-bg)", color: "var(--color-available)",
+      }}>
+        <Users size={20} strokeWidth={2} />
+      </div>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: "var(--color-text-muted)" }}>
+          {t("owner.dashboard.neighborhoodDemandTitle")}
+        </div>
+        <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--color-text-primary)", marginTop: 2 }}>
+          {loading
+            ? t("owner.dashboard.neighborhoodDemandLoading")
+            : count > 0
+              ? t("owner.dashboard.neighborhoodDemandCount", count)
+              : t("owner.dashboard.neighborhoodDemandZero")}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Daily Cash-Out widget ─────────────────────────────────────────────────────
+// A re-themed, always-visible summary of today's ledger (see
+// fetchDailyTransactions in useStores.js) — instant bookkeeping without a
+// paper log, front and center on the dashboard rather than tucked behind
+// the "Today's Transactions" report button.
+function DailyCashOutCard({ storeId, refreshKey }) {
+  const { t } = useLanguage();
+  const [totals, setTotals] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!storeId) return;
+    let cancelled = false;
+    setLoading(true);
+    fetchDailyTransactions(storeId).then((rows) => {
+      if (cancelled) return;
+      const sold = rows.filter((r) => r.transactionType === "sold");
+      const cashEarned = sold.reduce((sum, r) => sum + (r.earnings ?? 0), 0);
+      const itemsSold = sold.reduce((sum, r) => sum + Math.abs(r.quantityChanged ?? 0), 0);
+      setTotals({ cashEarned, itemsSold });
+      setLoading(false);
+    });
+    return () => { cancelled = true; };
+    // refreshKey ticks whenever `inventory` changes (a sale updates the
+    // inventory row via record_sale), so this stays current without a
+    // manual refresh button.
+  }, [storeId, refreshKey]);
+
+  return (
+    <div className="metric-card" style={{
+      display: "flex", alignItems: "center", gap: 16,
+      padding: "14px 16px", borderRadius: "var(--radius-md, 10px)",
+      border: "1px solid var(--color-border)", background: "var(--color-surface)",
+      marginBottom: 16, flexWrap: "wrap",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{
+          width: 40, height: 40, borderRadius: "50%", flexShrink: 0,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          background: "var(--color-brand-primary-bg, var(--color-available-bg))", color: "var(--color-brand-primary)",
+        }}>
+          <Wallet size={20} strokeWidth={2} />
+        </div>
+        <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: "var(--color-text-muted)" }}>
+          {t("owner.dashboard.dailyCashOutTitle")}
+        </div>
+      </div>
+
+      {loading ? (
+        <span style={{ fontSize: 13, color: "var(--color-text-muted)" }}>{t("owner.dashboard.cashOutLoading")}</span>
+      ) : (
+        <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: "var(--color-available)" }}>
+              {formatPrice(totals?.cashEarned ?? 0)}
+            </div>
+            <div style={{ fontSize: 11, color: "var(--color-text-muted)" }}>{t("owner.dashboard.cashEarnedToday")}</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: "var(--color-text-primary)" }}>
+              {totals?.itemsSold ?? 0}
+            </div>
+            <div style={{ fontSize: 11, color: "var(--color-text-muted)" }}>{t("owner.dashboard.itemsSoldToday")}</div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -587,7 +760,7 @@ function StoreSwitcher({ stores, selectedStoreId, onSelect }) {
       >
         {stores.map((s) => (
           <option key={s.id} value={s.id}>
-            {s.name}{s.status !== "approved" ? ` (${s.status === "rejected" ? t("owner.dashboard.rejected") : t("owner.dashboard.pending")})` : ""}
+            {s.name}
           </option>
         ))}
       </select>
@@ -920,7 +1093,12 @@ export default function OwnerDashboard({ session }) {
       </header>
 
       <main className="dashboard-main">
-        {myStore && <ApprovalBanner store={myStore} />}
+        {myStore && (
+          <>
+            <NeighborhoodDemandCard storeId={myStore.id} />
+            <DailyCashOutCard storeId={myStore.id} refreshKey={inventory.length + inventory.reduce((s, p) => s + (p.quantity ?? 0), 0)} />
+          </>
+        )}
 
         <div className="dashboard-toolbar">
           <div className="dashboard-section-label">
@@ -1090,3 +1268,5 @@ export default function OwnerDashboard({ session }) {
     </div>
   );
 }
+
+

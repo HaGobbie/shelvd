@@ -10,6 +10,7 @@ import { X, MapPin, Phone, Clock, Package, Navigation, ExternalLink } from "luci
 import { formatLastUpdated, formatPrice } from "../hooks/useStores";
 import { useLanguage } from "../i18n/LanguageContext";
 import { buildGoogleMapsViewLink } from "../utils/googleMapsLink";
+import { SERVICE_CATEGORY_EMOJI } from "./ProductFormModal";
 
 // ─── Status badge config ──────────────────────────────────────────────────────
 // Colors reference CSS custom properties (defined in :root, App.css)
@@ -137,12 +138,47 @@ function StatusBadge({ status }) {
 }
 
 /**
- * ProductRow — a single product line in the inventory list
+ * ProductRow — a single product line in the inventory list.
+ *
+ * Service products (Water Refill, E-Load, LPG / Cooking Gas, Ice — see
+ * is_service in sql/021_frictionless_registration_and_services.sql) get
+ * a dedicated badge instead of a price + numeric-stock-status layout,
+ * since "quantity: 999" or a price-per-unit doesn't mean much to a
+ * resident checking whether the service itself is available right now.
  */
 function ProductRow({ product, searchQuery }) {
+  const { t } = useLanguage();
   const isMatch =
     searchQuery.trim() &&
     product.name.toLowerCase().includes(searchQuery.toLowerCase());
+
+  if (product.isService) {
+    const isAvailable = (product.quantity ?? 0) > 0;
+    const emoji = SERVICE_CATEGORY_EMOJI[product.category] ?? "🛎️";
+    return (
+      <div className={`product-row ${isMatch ? "product-row--match" : ""}`}>
+        <div className="product-row__left">
+          <span className="product-row__name">{product.name}</span>
+          <span className="product-row__category">{product.category}</span>
+        </div>
+        <div className="product-row__right">
+          <span
+            className="status-badge"
+            style={{
+              color: isAvailable ? "var(--color-available)" : "var(--color-out)",
+              background: isAvailable ? "var(--color-available-bg)" : "var(--color-out-bg)",
+              borderColor: isAvailable ? "var(--color-available)" : "var(--color-out)",
+            }}
+          >
+            {emoji}&nbsp;
+            {isAvailable
+              ? t("storeDetails.serviceAvailable", product.category)
+              : t("storeDetails.serviceUnavailable", product.category)}
+          </span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={`product-row ${isMatch ? "product-row--match" : ""}`}>
@@ -390,3 +426,5 @@ export default function StoreDetails({ store, searchQuery = "", onClose }) {
     </AnimatePresence>
   );
 }
+
+

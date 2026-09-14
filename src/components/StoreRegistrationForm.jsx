@@ -1,11 +1,26 @@
 // src/components/StoreRegistrationForm.jsx
 // 3-step store registration wizard for new store owners.
 //
-// Step 1 — Store Details   : name, type, owner name, contact number
-// Step 2 — GIS Location    : Nominatim address search + draggable Leaflet pin
+// Step 1 — Store Details   : name, type, contact number (owner/manager
+//                             name is no longer asked here — it's
+//                             auto-filled from the signed-in account so
+//                             a first-time merchant has one less field
+//                             to type; still editable later from Edit
+//                             Store, which keeps its own owner field).
+// Step 2 — GIS Location    : auto-pinned from the browser's GPS the
+//                             moment this step opens (useGeolocation),
+//                             with Nominatim address search + a
+//                             draggable Leaflet pin as fallback/fine-tune
 // Step 3 — Review & Submit : summary before writing to Supabase
 //
-// On submit → supabase.from('stores').insert({ ..., owner_id: user.id, status: 'pending_approval' })
+// FRICTIONLESS REGISTRATION: on submit this now writes
+// status: 'approved' directly — there is no more barangay-approval
+// review gate. (The `stores.status` column default was also changed to
+// 'approved' at the DB level in
+// sql/021_frictionless_registration_and_services.sql; this form sends it
+// explicitly too so the behavior doesn't silently depend on that default
+// alone.)
+//
 // Coordinates are sent as a single PostGIS `location` field using EWKT text
 // ("SRID=4326;POINT(lng lat)") — Postgres casts this to geography(Point,4326)
 // automatically; `latitude`/`longitude` are generated columns derived from it.
@@ -13,7 +28,7 @@
 // NOTE ON STORE_TYPES: dropdown values stay in English regardless of UI
 // language — stored as-is in the DB and shown on the public map.
 
-import React, { useState, useCallback, useEffect, useRef } from "react";
+import React, { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   MapContainer,
@@ -34,11 +49,32 @@ import {
   CheckCircle2,
   Loader2,
   AlertTriangle,
+  LocateFixed,
 } from "lucide-react";
 import { supabase } from "../config/supabaseClient";
 import { useLanguage } from "../i18n/LanguageContext";
 import { useTheme } from "../theme/ThemeContext";
+import { useGeolocation } from "../hooks/useGeolocation";
 import { getTileUrl, TILE_ATTRIBUTION } from "../config/mapTiles";
+
+/**
+ * deriveOwnerNameFromUser
+ * `stores.owner_name` is NOT NULL in the schema, but Step 1 no longer
+ * asks the merchant to type it (see file header) — this fills it
+ * automatically from whatever the signed-in Supabase Auth account
+ * already knows, so nothing breaks the NOT NULL constraint and nobody
+ * has to type their own name into a form.
+ */
+function deriveOwnerNameFromUser(user) {
+  if (!user) return "";
+  const meta = user.user_metadata || {};
+  return (
+    meta.full_name ||
+    meta.name ||
+    (user.email ? user.email.split("@")[0] : "") ||
+    "Store Owner"
+  );
+}
 
 // ─── Fix Leaflet default icon path (Vite bundler issue) ──────────────────────
 delete L.Icon.Default.prototype._getIconUrl;
@@ -185,22 +221,6 @@ function StepStoreDetails({ data, onChange, errors, t }) {
       </div>
 
       <div className="regform__field">
-        <label className="regform__label" htmlFor="reg-owner">
-          {t("owner.registration.ownerLabel")} <span className="pform__required">*</span>
-        </label>
-        <input
-          id="reg-owner"
-          className={`pform__input ${errors.ownerName ? "pform__input--error" : ""}`}
-          type="text"
-          placeholder={t("owner.registration.ownerPlaceholder")}
-          value={data.ownerName}
-          onChange={(e) => onChange("ownerName", e.target.value)}
-          maxLength={60}
-        />
-        {errors.ownerName && <span className="regform__field-error">{errors.ownerName}</span>}
-      </div>
-
-      <div className="regform__field">
         <label className="regform__label" htmlFor="reg-contact">
           {t("owner.registration.contactLabel")} <span className="pform__required">*</span>
         </label>
@@ -219,7 +239,8 @@ function StepStoreDetails({ data, onChange, errors, t }) {
   );
 }
 
-/** Step 2 — GIS location with Nominatim geocoding + draggable pin */
+/** Step 2 — GIS location: auto-pinned from GPS on entry, with Nominatim
+ *  geocoding + a draggable pin available as fallback/fine-tuning. */
 function StepGISLocation({ data, onChange, errors, t, theme }) {
   const [searchQuery, setSearchQuery] = useState(data.address || "");
   const [geocoding, setGeocoding] = useState(false);
@@ -227,6 +248,32 @@ function StepGISLocation({ data, onChange, errors, t, theme }) {
   const [flyTarget, setFlyTarget] = useState(null);
 
   const hasCoords = data.lat !== null && data.lng !== null;
+
+  // Automated GPS pinning: request the browser's location the moment
+  // this step is shown, and — if the merchant hasn't already placed a
+  // pin some other way — drop the marker straight on their GPS
+  // coordinates and fly the map there. useGeolocation() already
+  // auto-requests on its own mount, so mounting it here (rather than
+  // higher up the tree) is what makes it fire exactly when Step 2
+  // becomes visible, not before.
+  const { position: gpsPosition, status: gpsStatus, requestLocation: retryGps } = useGeolocation();
+  const hasAutoPinnedRef = useRef(false);
+
+  useEffect(() => {
+    if (hasAutoPinnedRef.current) return;
+    if (hasCoords) {
+      // Merchant (or a previous visit to this step) already set a pin —
+      // don't clobber it with GPS once it resolves.
+      hasAutoPinnedRef.current = true;
+      return;
+    }
+    if (gpsStatus === "granted" && gpsPosition) {
+      hasAutoPinnedRef.current = true;
+      onChange("lat", gpsPosition[0]);
+      onChange("lng", gpsPosition[1]);
+      setFlyTarget(gpsPosition);
+    }
+  }, [gpsStatus, gpsPosition, hasCoords, onChange]);
 
   /** Nominatim address → coordinates */
   const handleGeocode = useCallback(async () => {
@@ -278,7 +325,52 @@ function StepGISLocation({ data, onChange, errors, t, theme }) {
         {t("owner.registration.stepLocationDesc")}
       </p>
 
-      {/* Address search + geocode */}
+      {/* Reassurance banner — the pin doesn't need to be pixel-perfect */}
+      <div className="regform__banner" role="note" style={{
+        display: "flex", alignItems: "flex-start", gap: 8,
+        padding: "10px 14px", borderRadius: "var(--radius-md, 8px)",
+        marginBottom: 14, fontSize: 12.5, lineHeight: 1.5,
+        background: "var(--color-surface-3)", color: "var(--color-text-secondary)",
+      }}>
+        <MapPin size={16} style={{ flexShrink: 0, marginTop: 1, color: "var(--color-brand-primary)" }} />
+        <span>{t("owner.registration.locationBanner")}</span>
+      </div>
+
+      {/* GPS auto-pin status — auto-fires on step entry; search/tap/drag
+          below all remain available to fine-tune or override it */}
+      {!hasCoords && gpsStatus === "loading" && (
+        <div className="regform__field-hint" style={{
+          display: "flex", alignItems: "center", gap: 8, fontSize: 13,
+          color: "var(--color-text-muted)", marginBottom: 10,
+        }}>
+          <Loader2 size={14} className="regform__spin" /> {t("owner.registration.locatingGps")}
+        </div>
+      )}
+      {!hasCoords && (gpsStatus === "denied" || gpsStatus === "unsupported") && (
+        <div className="regform__field-hint" style={{
+          display: "flex", alignItems: "center", gap: 8, fontSize: 13,
+          color: "var(--color-low)", marginBottom: 10,
+        }}>
+          <AlertTriangle size={14} />
+          <span>{t("owner.registration.gpsUnavailable")}</span>
+          {gpsStatus === "denied" && (
+            <button
+              type="button"
+              onClick={retryGps}
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 4,
+                background: "none", border: "none", color: "var(--color-brand-primary)",
+                fontWeight: 700, cursor: "pointer", padding: 0, fontSize: 13,
+              }}
+            >
+              <LocateFixed size={13} /> {t("owner.registration.tryGpsAgain")}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Address search + geocode (fallback / fine-tune — GPS already
+          placed the pin above in the common case) */}
       <div className="regform__field">
         <label className="regform__label" htmlFor="reg-address">
           {t("owner.registration.addressLabel")}
@@ -394,7 +486,6 @@ function StepReview({ data, t, theme }) {
   const rows = [
     { label: t("owner.registration.reviewStoreName"), value: data.name },
     { label: t("owner.registration.reviewStoreType"), value: data.type },
-    { label: t("owner.registration.reviewOwner"), value: data.ownerName },
     { label: t("owner.registration.reviewContact"), value: data.contactNumber },
     { label: t("owner.registration.reviewAddress"), value: data.address || t("owner.registration.reviewNotProvided") },
     { label: t("owner.registration.reviewCoordinates"), value: hasCoords ? `${data.lat.toFixed(6)}, ${data.lng.toFixed(6)}` : t("owner.registration.reviewNotSet") },
@@ -460,8 +551,8 @@ const INITIAL_DATA = {
 
 /**
  * StoreRegistrationForm
- * Shows a 3-step wizard and writes the new store to Supabase on submit,
- * starting in "pending_approval" status per the RLS insert policy.
+ * Shows a 3-step wizard and writes the new store to Supabase on submit
+ * as "approved" — live on the public map immediately, no review step.
  *
  * @param {{
  *   user: import("@supabase/supabase-js").User,
@@ -495,13 +586,20 @@ export default function StoreRegistrationForm({ user, onComplete, onCancel }) {
     setErrors((prev) => ({ ...prev, [field]: undefined, coords: undefined }));
   }, []);
 
+  // Owner/manager name is no longer a Step 1 field (see file header) —
+  // auto-fill it once from the signed-in account so `owner_name` (NOT
+  // NULL in the schema) is always populated without asking the merchant
+  // to type their own name during registration.
+  useEffect(() => {
+    setData((prev) => (prev.ownerName ? prev : { ...prev, ownerName: deriveOwnerNameFromUser(user) }));
+  }, [user]);
+
   // ── Per-step validation ──────────────────────────────────────────────────
   const validate = (targetStep) => {
     const errs = {};
     if (targetStep >= 1) {
       if (!data.name.trim())          errs.name         = t("owner.registration.nameRequired");
       if (!data.type)                 errs.type         = t("owner.registration.typeRequired");
-      if (!data.ownerName.trim())     errs.ownerName    = t("owner.registration.ownerRequired");
       if (!data.contactNumber.trim()) errs.contactNumber = t("owner.registration.contactRequired");
     }
     if (targetStep >= 2) {
@@ -556,7 +654,11 @@ export default function StoreRegistrationForm({ user, onComplete, onCancel }) {
       location:       `SRID=4326;POINT(${data.lng} ${data.lat})`,
       owner_id:       user.id,
       owner_email:    user.email,
-      status:         "pending_approval",
+      // FRICTIONLESS REGISTRATION: no more review gate — the store is
+      // immediately live on the public map. (The DB column default was
+      // also changed to 'approved'; sent explicitly here too so this
+      // doesn't silently depend on that default alone.)
+      status:         "approved",
     });
 
     if (insertError) {
@@ -693,3 +795,5 @@ export default function StoreRegistrationForm({ user, onComplete, onCancel }) {
     </div>
   );
 }
+
+

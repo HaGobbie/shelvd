@@ -5,16 +5,15 @@
 // fully derived server-side by sync_status_from_quantity() from quantity
 // vs low_stock_threshold — this form never sends `status`.
 //
-// SMART STOCK-EDIT LOGGING (new): when the owner changes the Quantity
-// field, this form no longer just silently updates the number:
+// SMART STOCK-EDIT LOGGING: when the owner changes the Quantity field,
+// this form no longer just silently updates the number:
 //   - Quantity INCREASED  -> logged automatically as 'restocked', $0 earnings.
 //   - Quantity DECREASED  -> a secondary prompt asks WHY (Spoiled / Personal
 //     Use / Other) before saving, logged with that reason, $0 earnings.
 //   - Quantity UNCHANGED  -> no ledger entry at all.
 // A brand-new product (Add mode) with a nonzero starting quantity also
 // gets an initial 'restocked' entry, so the ledger has a complete history
-// from day one — not explicitly requested, but a natural extension given
-// the ledger exists at all; flagged here in case that's not wanted.
+// from day one.
 //
 // Both the quantity change AND its ledger entry happen together inside
 // record_stock_adjustment() (see 18_inventory_transactions_ledger.sql) —
@@ -26,6 +25,25 @@
 // already correctly saved, only the quantity/ledger write needs another
 // attempt. That's a visible, recoverable state, not silent inconsistency,
 // so it's an accepted tradeoff rather than something this pass solves.
+//
+// QUICK ENTRY / ADVANCED DRAWER (new): the default view now shows only
+// Name, Category, Price, and Quantity-or-Availability — SKU, Unit,
+// Description, and Low Stock Threshold move behind a collapsible
+// "Advanced Options" drawer. Category stays in the default view (rather
+// than the drawer) for two reasons: `inventory.category` is NOT NULL in
+// the schema, and it's what decides whether this is a countable product
+// (numeric Quantity) or a service (Available/Unavailable switch) — that
+// decision has to be visible before the rest of the form makes sense.
+//
+// SERVICE PRODUCTS (new): selecting a service category (Water Refill,
+// E-Load, LPG / Cooking Gas, Ice) swaps the numeric Quantity input for a
+// binary Available/Unavailable switch. On submit this maps straight to
+// quantity 999 (Available) / 0 (Unavailable) — see is_service in
+// sql/021_frictionless_registration_and_services.sql for why no new
+// status logic was needed for this. Toggling a service's availability
+// also skips the "why did stock go down" reason prompt entirely — there's
+// no spoilage/personal-use concept for a service going unavailable, so
+// asking would just be friction with no useful answer.
 //
 // NOTE ON CATEGORIES: dropdown VALUES stay in English regardless of UI
 // language — stored as-is in the DB and shown on the public map.
@@ -40,14 +58,31 @@ import {
   Save,
   Plus,
   ArrowLeft,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { supabase } from "../config/supabaseClient";
 import { recordStockAdjustment } from "../hooks/useStores";
 import { useLanguage } from "../i18n/LanguageContext";
 
+// Service categories map straight to a binary Available/Unavailable
+// switch (quantity 999/0) instead of a numeric stock count — see file
+// header. Each gets its own emoji for the service badge shown on the
+// public StoreDetails page.
+const SERVICE_CATEGORIES = ["Water Refill", "E-Load", "LPG / Cooking Gas", "Ice"];
+
+export const SERVICE_CATEGORY_EMOJI = {
+  "Water Refill": "💧",
+  "E-Load": "📱",
+  "LPG / Cooking Gas": "🔥",
+  "Ice": "🧊",
+};
+
 const CATEGORIES = [
   "Pantry", "Grains", "Canned Goods", "Beverages", "Condiments",
-  "Dairy & Eggs", "Household", "Personal Care", "Snacks", "Frozen Goods", "Other",
+  "Dairy & Eggs", "Household", "Personal Care", "Snacks", "Frozen Goods",
+  ...SERVICE_CATEGORIES,
+  "Other",
 ];
 
 const STATUS_CONFIG = {
@@ -102,6 +137,13 @@ export default function ProductFormModal({ isOpen, onClose, storeId, initialData
   const [decreaseNotes, setDecreaseNotes] = useState("");
   const pendingSaveRef = useRef(null);
 
+  // Advanced Options drawer — collapsed by default so a first-time
+  // merchant only sees Name / Category / Price / Quantity up front.
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  const finalCategoryPreview = category === "Other" ? customCategory.trim() : category;
+  const isService = SERVICE_CATEGORIES.includes(finalCategoryPreview);
+
   useEffect(() => {
     if (isOpen) {
       if (isEditMode && initialData) {
@@ -124,9 +166,26 @@ export default function ProductFormModal({ isOpen, onClose, storeId, initialData
       setShowReasonPrompt(false);
       setDecreaseReason("spoiled");
       setDecreaseNotes("");
+      // Auto-open the drawer in Edit mode when any advanced field is
+      // already filled in, so an owner editing an existing product with
+      // a description/SKU doesn't have to go hunting for the toggle to
+      // see what they already saved.
+      setShowAdvanced(
+        isEditMode && Boolean(initialData?.sku || initialData?.description || (initialData?.unit && initialData.unit !== "piece"))
+      );
       setTimeout(() => nameInputRef.current?.focus(), 320);
     }
   }, [isOpen, isEditMode, initialData]);
+
+  // Whenever the category flips into "service" territory, normalize
+  // whatever numeric quantity was sitting there into service space
+  // (0 or 999) so the Available/Unavailable switch below has a sane
+  // starting position instead of showing garbage like "12".
+  useEffect(() => {
+    if (isService) {
+      setQuantity((prev) => (Number(prev) > 0 ? "999" : "0"));
+    }
+  }, [isService]);
 
   const previewStatus = useMemo(() => {
     const qtyNum = Number(quantity);
@@ -221,6 +280,23 @@ export default function ProductFormModal({ isOpen, onClose, storeId, initialData
     };
 
     const originalQuantity = isEditMode ? (initialData.quantity ?? 0) : 0;
+
+    // Services skip the "why did stock go down" prompt entirely — a
+    // service going from Available to Unavailable isn't spoilage or
+    // personal use, so asking would just be friction with no useful
+    // answer. Still logs through recordStockAdjustment() so the ledger
+    // and status derivation stay consistent — it just picks the
+    // transaction type automatically instead of asking.
+    if (isService) {
+      if (finalQuantity === originalQuantity) {
+        await performSave(fields, finalQuantity, null);
+      } else if (finalQuantity > originalQuantity) {
+        await performSave(fields, finalQuantity, { transactionType: "restocked", notes: null });
+      } else {
+        await performSave(fields, finalQuantity, { transactionType: "other", notes: "Marked unavailable" });
+      }
+      return;
+    }
 
     if (finalQuantity < originalQuantity) {
       pendingSaveRef.current = { fields, finalQuantity };
@@ -386,63 +462,138 @@ export default function ProductFormModal({ isOpen, onClose, storeId, initialData
                         onChange={(e) => setPrice(e.target.value)} />
                     </div>
 
-                    <div className="pform__field">
-                      <label className="pform__label" htmlFor="pform-unit">{t("owner.product.unitLabel")}</label>
-                      <input id="pform-unit" className="pform__input" type="text" list="pform-unit-options"
-                        placeholder="piece" value={unit} onChange={(e) => setUnit(e.target.value)} maxLength={20} />
-                      <datalist id="pform-unit-options">
-                        <option value="piece" /><option value="pack" /><option value="kg" />
-                        <option value="g" /><option value="liter" /><option value="ml" />
-                        <option value="box" /><option value="sack" /><option value="bottle" />
-                      </datalist>
-                    </div>
-
-                    <div className="pform__field">
-                      <label className="pform__label" htmlFor="pform-sku">{t("owner.product.skuLabel")}</label>
-                      <input id="pform-sku" className="pform__input" type="text"
-                        placeholder={t("owner.product.skuPlaceholder")} value={sku}
-                        onChange={(e) => setSku(e.target.value)} maxLength={64} />
-                    </div>
-
-                    <div className="pform__field">
-                      <label className="pform__label" htmlFor="pform-description">{t("owner.product.descriptionLabel")}</label>
-                      <textarea id="pform-description" className="pform__input"
-                        style={{ minHeight: 72, resize: "vertical", fontFamily: "inherit" }}
-                        placeholder={t("owner.product.descriptionPlaceholder")} value={description}
-                        onChange={(e) => setDescription(e.target.value)} maxLength={500} />
-                      <span className="pform__char-count">{description.length}/500</span>
-                    </div>
-
-                    <div style={{ display: "flex", gap: 12 }}>
-                      <div className="pform__field" style={{ flex: 1 }}>
+                    {isService ? (
+                      <div className="pform__field">
+                        <label className="pform__label">{t("owner.product.availabilityLabel")}</label>
+                        <div role="group" aria-label={t("owner.product.availabilityLabel")}
+                          style={{ display: "flex", borderRadius: "var(--radius-pill, 999px)", overflow: "hidden", border: "1.5px solid var(--color-border)" }}>
+                          <button
+                            type="button"
+                            onClick={() => setQuantity("999")}
+                            aria-pressed={Number(quantity) > 0}
+                            style={{
+                              flex: 1, minHeight: 44, border: "none", cursor: "pointer",
+                              fontWeight: 700, fontSize: 14, display: "flex", alignItems: "center",
+                              justifyContent: "center", gap: 6,
+                              background: Number(quantity) > 0 ? "var(--color-available)" : "var(--color-surface)",
+                              color: Number(quantity) > 0 ? "#fff" : "var(--color-text-secondary)",
+                            }}
+                          >
+                            <PackageCheck size={16} /> {t("owner.product.markAvailable")}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setQuantity("0")}
+                            aria-pressed={Number(quantity) <= 0}
+                            style={{
+                              flex: 1, minHeight: 44, border: "none", cursor: "pointer",
+                              fontWeight: 700, fontSize: 14, display: "flex", alignItems: "center",
+                              justifyContent: "center", gap: 6,
+                              background: Number(quantity) <= 0 ? "var(--color-out)" : "var(--color-surface)",
+                              color: Number(quantity) <= 0 ? "#fff" : "var(--color-text-secondary)",
+                            }}
+                          >
+                            <PackageX size={16} /> {t("owner.product.markUnavailable")}
+                          </button>
+                        </div>
+                        <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 6 }}>
+                          {t("owner.product.serviceHint")}
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="pform__field">
                         <label className="pform__label" htmlFor="pform-quantity">{t("owner.product.quantityLabel")}</label>
                         <input id="pform-quantity" className="pform__input" type="number" inputMode="numeric"
                           min="0" step="1" value={quantity} onChange={(e) => setQuantity(e.target.value)} />
                       </div>
-                      <div className="pform__field" style={{ flex: 1 }}>
-                        <label className="pform__label" htmlFor="pform-threshold">{t("owner.product.thresholdLabel")}</label>
-                        <input id="pform-threshold" className="pform__input" type="number" inputMode="numeric"
-                          min="0" step="1" value={lowStockThreshold} onChange={(e) => setLowStockThreshold(e.target.value)} />
-                      </div>
-                    </div>
+                    )}
 
-                    <div className="pform__field">
-                      <label className="pform__label">{t("owner.product.resultingStatusLabel")}</label>
-                      <div style={{
-                        display: "inline-flex", alignItems: "center", gap: 8,
-                        padding: "8px 16px", borderRadius: "var(--radius-pill, 999px)",
-                        background: previewCfg.bg, border: `1.5px solid ${previewCfg.border}`,
-                        color: previewCfg.color, fontWeight: 700, fontSize: 14,
-                      }}>
-                        <previewCfg.Icon size={18} strokeWidth={2.2} />
-                        {t(`status.${previewStatus}`)}
-                      </div>
-                      <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 6 }}>
-                        {t("owner.product.resultingStatusHint")}
-                      </p>
-                    </div>
+                    {/* Advanced Options drawer — SKU, Unit, Description,
+                        and (for countable products) Low Stock Threshold
+                        all live here, collapsed by default. See file
+                        header for why Category/Price/Quantity stay
+                        outside it. */}
+                    <button
+                      type="button"
+                      onClick={() => setShowAdvanced((v) => !v)}
+                      aria-expanded={showAdvanced}
+                      style={{
+                        display: "flex", alignItems: "center", gap: 6, width: "100%",
+                        background: "none", border: "none", cursor: "pointer",
+                        color: "var(--color-brand-primary)", fontWeight: 700, fontSize: 13,
+                        padding: "8px 0", margin: "4px 0 8px",
+                      }}
+                    >
+                      {showAdvanced ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                      {showAdvanced ? t("owner.product.advancedHide") : t("owner.product.advancedShow")}
+                    </button>
 
-                    {isEditMode && Number(quantity) < (initialData?.quantity ?? 0) && (
+                    <AnimatePresence initial={false}>
+                      {showAdvanced && (
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: "auto", opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          transition={{ duration: 0.2 }}
+                          style={{ overflow: "hidden" }}
+                        >
+                          <div className="pform__field">
+                            <label className="pform__label" htmlFor="pform-sku">{t("owner.product.skuLabel")}</label>
+                            <input id="pform-sku" className="pform__input" type="text"
+                              placeholder={t("owner.product.skuPlaceholder")} value={sku}
+                              onChange={(e) => setSku(e.target.value)} maxLength={64} />
+                          </div>
+
+                          <div className="pform__field">
+                            <label className="pform__label" htmlFor="pform-unit">{t("owner.product.unitLabel")}</label>
+                            <input id="pform-unit" className="pform__input" type="text" list="pform-unit-options"
+                              placeholder="piece" value={unit} onChange={(e) => setUnit(e.target.value)} maxLength={20} />
+                            <datalist id="pform-unit-options">
+                              <option value="piece" /><option value="pack" /><option value="kg" />
+                              <option value="g" /><option value="liter" /><option value="ml" />
+                              <option value="box" /><option value="sack" /><option value="bottle" />
+                            </datalist>
+                          </div>
+
+                          <div className="pform__field">
+                            <label className="pform__label" htmlFor="pform-description">{t("owner.product.descriptionLabel")}</label>
+                            <textarea id="pform-description" className="pform__input"
+                              style={{ minHeight: 72, resize: "vertical", fontFamily: "inherit" }}
+                              placeholder={t("owner.product.descriptionPlaceholder")} value={description}
+                              onChange={(e) => setDescription(e.target.value)} maxLength={500} />
+                            <span className="pform__char-count">{description.length}/500</span>
+                          </div>
+
+                          {!isService && (
+                            <div className="pform__field">
+                              <label className="pform__label" htmlFor="pform-threshold">{t("owner.product.thresholdLabel")}</label>
+                              <input id="pform-threshold" className="pform__input" type="number" inputMode="numeric"
+                                min="0" step="1" value={lowStockThreshold} onChange={(e) => setLowStockThreshold(e.target.value)} />
+                            </div>
+                          )}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+
+                    {!isService && (
+                      <div className="pform__field">
+                        <label className="pform__label">{t("owner.product.resultingStatusLabel")}</label>
+                        <div style={{
+                          display: "inline-flex", alignItems: "center", gap: 8,
+                          padding: "8px 16px", borderRadius: "var(--radius-pill, 999px)",
+                          background: previewCfg.bg, border: `1.5px solid ${previewCfg.border}`,
+                          color: previewCfg.color, fontWeight: 700, fontSize: 14,
+                        }}>
+                          <previewCfg.Icon size={18} strokeWidth={2.2} />
+                          {t(`status.${previewStatus}`)}
+                        </div>
+                        <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 6 }}>
+                          {t("owner.product.resultingStatusHint")}
+                        </p>
+                      </div>
+                    )}
+
+                    {!isService && isEditMode && Number(quantity) < (initialData?.quantity ?? 0) && (
                       <p style={{ fontSize: 12, color: "var(--color-low)", marginTop: -8, marginBottom: 12 }}>
                         <AlertTriangle size={12} style={{ display: "inline", marginRight: 4 }} />
                         {t("owner.product.decreaseWillAsk")}
@@ -478,3 +629,5 @@ export default function ProductFormModal({ isOpen, onClose, storeId, initialData
     </AnimatePresence>
   );
 }
+
+

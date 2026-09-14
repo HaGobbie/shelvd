@@ -62,6 +62,10 @@ function mapProductRow(row) {
     description: row.description,
     unit: row.unit,
     lastUpdated: row.last_updated,
+    // Services (Water Refill, E-Load, LPG, Ice, ...) use quantity 999/0
+    // as an Available/Unavailable proxy instead of a real stock count —
+    // see 021_frictionless_registration_and_services.sql.
+    isService: row.is_service ?? false,
   };
 }
 
@@ -190,7 +194,7 @@ export function useStoreDetails(storeId) {
           .single(),
         supabase
           .from("inventory")
-          .select("id, store_id, name, category, price, status, quantity, low_stock_threshold, sku, description, unit, last_updated")
+          .select("id, store_id, name, category, price, status, quantity, low_stock_threshold, sku, description, unit, last_updated, is_service")
           .eq("store_id", storeId),
       ]);
 
@@ -327,6 +331,10 @@ export async function bulkUpsertInventory(storeId, rows, { overwrite } = { overw
     sku: row.sku ?? null,
     description: row.description ?? null,
     unit: row.unit ?? "piece",
+    // Bulk CSV import has no UI concept of services today — this just
+    // defaults to false (a normal countable product) unless a future
+    // CSV column mapping explicitly sets row.isService.
+    is_service: row.isService ?? false,
   }));
 
   return supabase
@@ -335,7 +343,7 @@ export async function bulkUpsertInventory(storeId, rows, { overwrite } = { overw
       onConflict: "store_id,name_normalized",
       ignoreDuplicates: !overwrite,
     })
-    .select("id, name, price, status, quantity, low_stock_threshold, sku, description, unit");
+    .select("id, name, price, status, quantity, low_stock_threshold, sku, description, unit, is_service");
 }
 
 export async function deleteStore(storeId) {
@@ -360,7 +368,7 @@ export function useOwnerInventory(storeId) {
 
     supabase
       .from("inventory")
-      .select("id, store_id, name, category, price, status, quantity, low_stock_threshold, sku, description, unit, last_updated")
+      .select("id, store_id, name, category, price, status, quantity, low_stock_threshold, sku, description, unit, last_updated, is_service")
       .eq("store_id", storeId)
       .order("name", { ascending: true })
       .then(({ data }) => {
@@ -418,7 +426,7 @@ export async function searchInventory(term) {
     console.error("searchInventory failed:", error);
     return [];
   }
-  return (data ?? []).map((row) => ({
+  const results = (data ?? []).map((row) => ({
     storeId: row.store_id,
     storeName: row.store_name,
     coords: [row.latitude, row.longitude],
@@ -429,6 +437,47 @@ export async function searchInventory(term) {
     status: row.status,
     rank: row.rank,
   }));
+
+  // Best-effort "Neighborhood Demand" signal (see
+  // 021_frictionless_registration_and_services.sql, Part 5). Logs one
+  // row per distinct matched category per search — deliberately
+  // fire-and-forget: a logging failure must never surface as a broken
+  // search for the resident actually looking for a product.
+  const distinctCategories = [...new Set(results.map((r) => r.category).filter(Boolean))];
+  if (distinctCategories.length > 0) {
+    supabase
+      .from("search_events")
+      .insert(distinctCategories.map((matched_category) => ({ matched_category })))
+      .then(({ error: logError }) => {
+        if (logError) console.error("search_events logging failed (non-fatal):", logError);
+      });
+  }
+
+  return results;
+}
+
+/**
+ * fetchNeighborhoodDemand
+ * Backs the OwnerDashboard "Neighborhood Demand" metric card — counts
+ * recent public searches (last 7 days) whose matched category overlaps
+ * with this store's own inventory categories. See the Part 5 note in
+ * 021_frictionless_registration_and_services.sql for exactly what this
+ * does and doesn't measure (it's app-wide, not geofenced to "nearby").
+ *
+ * @param {string} storeId
+ * @param {number} [days=7]
+ */
+export async function fetchNeighborhoodDemand(storeId, days = 7) {
+  if (!storeId) return 0;
+  const { data, error } = await supabase.rpc("store_demand_count", {
+    p_store_id: storeId,
+    p_days: days,
+  });
+  if (error) {
+    console.error("fetchNeighborhoodDemand failed:", error);
+    return 0;
+  }
+  return data ?? 0;
 }
 
 export async function nearbyStores(lat, lng, radiusMeters = 5000) {
@@ -622,3 +671,5 @@ export function useDebouncedSearchMatches(searchQuery, debounceMs = 300) {
 
   return { matches, searching };
 }
+
+
