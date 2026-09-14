@@ -82,6 +82,12 @@ const STATUS_CONFIG = {
   out:       { Icon: PackageX,     color: "var(--color-out)" },
 };
 
+// "Paubos List" ordering — an owner scanning their physical shelf
+// notices the empty spots first, not whatever happens to come first
+// alphabetically. Lower number = shown first. Anything with an
+// unrecognized status (shouldn't happen, but defensive) sorts last.
+const STATUS_SEVERITY = { out: 0, low: 1, available: 2 };
+
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 // Options for "why did stock go down" — same three reasons as
@@ -865,11 +871,24 @@ export default function OwnerDashboard({ session }) {
     exportCurrentInventoryCSV(inventory, myStore?.name);
   };
 
-  const filteredInventory = filterQuery.trim()
+  // "Paubos List": items running low or out rise to the top, since
+  // that's the actual question an owner opens this screen to answer
+  // ("what do I need to restock?"), not "what's alphabetically first?".
+  // Within the same severity tier, alphabetical order is kept (matches
+  // useOwnerInventory's own .order("name") — a stable, predictable
+  // secondary sort rather than reshuffling every render).
+  // IMPORTANT: `.sort()` mutates in place, and when filterQuery is empty
+  // `filteredInventory` would otherwise be the exact same array
+  // reference as `inventory` (React state) — spreading into a new array
+  // first avoids silently mutating that state array out from under React.
+  const filteredInventory = [...(filterQuery.trim()
     ? inventory.filter((p) =>
         p.name.toLowerCase().includes(filterQuery.toLowerCase()) ||
         p.category.toLowerCase().includes(filterQuery.toLowerCase()))
-    : inventory;
+    : inventory)].sort((a, b) => {
+      const severityDiff = (STATUS_SEVERITY[a.status] ?? 99) - (STATUS_SEVERITY[b.status] ?? 99);
+      return severityDiff !== 0 ? severityDiff : a.name.localeCompare(b.name);
+    });
 
   if (!user) return <LoginScreen />;
 
