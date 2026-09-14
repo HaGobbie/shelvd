@@ -60,30 +60,20 @@ import {
   ArrowLeft,
   ChevronDown,
   ChevronUp,
+  Camera,
 } from "lucide-react";
 import { supabase } from "../config/supabaseClient";
 import { recordStockAdjustment } from "../hooks/useStores";
 import { useLanguage } from "../i18n/LanguageContext";
+import { scanProductImage } from "../services/geminiScanner";
+import { CATEGORIES, SERVICE_CATEGORIES } from "../constants/productCategories";
 
-// Service categories map straight to a binary Available/Unavailable
-// switch (quantity 999/0) instead of a numeric stock count — see file
-// header. Each gets its own emoji for the service badge shown on the
-// public StoreDetails page.
-const SERVICE_CATEGORIES = ["Water Refill", "E-Load", "LPG / Cooking Gas", "Ice"];
-
-export const SERVICE_CATEGORY_EMOJI = {
-  "Water Refill": "💧",
-  "E-Load": "📱",
-  "LPG / Cooking Gas": "🔥",
-  "Ice": "🧊",
-};
-
-const CATEGORIES = [
-  "Pantry", "Grains", "Canned Goods", "Beverages", "Condiments",
-  "Dairy & Eggs", "Household", "Personal Care", "Snacks", "Frozen Goods",
-  ...SERVICE_CATEGORIES,
-  "Other",
-];
+// Re-exported for back-compat with anything importing these from this
+// file directly (e.g. StoreDetails.jsx before this refactor) — the real
+// definitions now live in constants/productCategories.js, see that
+// file's header for why.
+export { CATEGORIES, SERVICE_CATEGORIES };
+export { SERVICE_CATEGORY_EMOJI } from "../constants/productCategories";
 
 const STATUS_CONFIG = {
   available: { Icon: PackageCheck, color: "var(--color-available)", bg: "var(--color-available-bg)", border: "var(--color-available-border)" },
@@ -131,6 +121,10 @@ export default function ProductFormModal({ isOpen, onClose, storeId, initialData
   const [saving, setSaving]       = useState(false);
   const [error, setError]         = useState("");
   const nameInputRef              = useRef(null);
+  const priceInputRef             = useRef(null);
+  const scanFileInputRef          = useRef(null);
+  const [scanning, setScanning]   = useState(false);
+  const [scanError, setScanError] = useState("");
 
   const [showReasonPrompt, setShowReasonPrompt] = useState(false);
   const [decreaseReason, setDecreaseReason] = useState("spoiled");
@@ -163,6 +157,8 @@ export default function ProductFormModal({ isOpen, onClose, storeId, initialData
         setDescription(""); setUnit("piece"); setSku("");
       }
       setError("");
+      setScanError("");
+      setScanning(false);
       setShowReasonPrompt(false);
       setDecreaseReason("spoiled");
       setDecreaseNotes("");
@@ -186,6 +182,45 @@ export default function ProductFormModal({ isOpen, onClose, storeId, initialData
       setQuantity((prev) => (Number(prev) > 0 ? "999" : "0"));
     }
   }, [isService]);
+
+  /**
+   * handleScanFile — "AI Snap & Fill". Sends a photo to the
+   * scan-product-image Edge Function (see that file + geminiScanner.js
+   * for why the Gemini key never touches this component) and, on
+   * success, fills in Name / Category / Unit / Price. If the scan
+   * couldn't find a price on the packaging, focus jumps to the Price
+   * field so the merchant can type it and immediately hit Save — the
+   * whole point is cutting the data entry down to "type one number."
+   * The scan only ever populates form state; nothing is saved until the
+   * merchant reviews it and taps Save themselves.
+   */
+  const handleScanFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-selecting the same file next time
+    if (!file) return;
+
+    setScanning(true);
+    setScanError("");
+    try {
+      const result = await scanProductImage(file);
+      if (result.name) setName(result.name);
+      setCategory(result.category);
+      if (result.category === "Other") setCustomCategory(result.customCategory);
+      setUnit(result.unit);
+      if (result.estimatedPrice !== null) {
+        setPrice(String(result.estimatedPrice));
+      } else {
+        setTimeout(() => priceInputRef.current?.focus(), 50);
+      }
+      // Service/quantity normalization is handled by the isService
+      // effect above once `category` updates.
+    } catch (err) {
+      console.error("AI Snap & Fill failed:", err);
+      setScanError(err.message || t("owner.product.aiScanError"));
+    } finally {
+      setScanning(false);
+    }
+  };
 
   const previewStatus = useMemo(() => {
     const qtyNum = Number(quantity);
@@ -423,6 +458,40 @@ export default function ProductFormModal({ isOpen, onClose, storeId, initialData
                 <div className="sheet-inventory" style={{ padding: "16px 20px 32px" }}>
                   <form onSubmit={handleSubmit} noValidate>
 
+                    {/* AI Snap & Fill — populates Name/Category/Unit/Price
+                        from a photo; the merchant still reviews and taps
+                        Save themselves, nothing here saves automatically. */}
+                    <input
+                      ref={scanFileInputRef}
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      style={{ display: "none" }}
+                      onChange={handleScanFile}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => scanFileInputRef.current?.click()}
+                      disabled={scanning}
+                      style={{
+                        display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                        width: "100%", minHeight: 46, marginBottom: 16,
+                        borderRadius: "var(--radius-md, 10px)", border: "1.5px dashed var(--color-brand-primary)",
+                        background: "var(--color-brand-primary-bg, transparent)", color: "var(--color-brand-primary)",
+                        fontWeight: 700, fontSize: 14, cursor: scanning ? "default" : "pointer",
+                        opacity: scanning ? 0.7 : 1,
+                      }}
+                    >
+                      {scanning
+                        ? <><span className="map-loading-spinner" style={{ width: 16, height: 16, borderWidth: 2 }} /> {t("owner.product.aiScanning")}</>
+                        : <><Camera size={18} strokeWidth={2} /> {t("owner.product.aiScanButton")}</>}
+                    </button>
+                    {scanError && (
+                      <p className="pform__error" style={{ marginTop: -8, marginBottom: 14 }}>
+                        ⚠️ {scanError}
+                      </p>
+                    )}
+
                     <div className="pform__field">
                       <label className="pform__label" htmlFor="pform-name">
                         {t("owner.product.nameLabel")} <span className="pform__required">*</span>
@@ -457,7 +526,7 @@ export default function ProductFormModal({ isOpen, onClose, storeId, initialData
                       <label className="pform__label" htmlFor="pform-price">
                         {t("owner.product.priceLabel")} <span className="pform__required">*</span>
                       </label>
-                      <input id="pform-price" className="pform__input" type="number" inputMode="decimal"
+                      <input ref={priceInputRef} id="pform-price" className="pform__input" type="number" inputMode="decimal"
                         min="0" step="0.01" placeholder="0.00" value={price}
                         onChange={(e) => setPrice(e.target.value)} />
                     </div>

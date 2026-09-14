@@ -126,6 +126,9 @@ export const translations = {
         markAvailable: "Available",
         markUnavailable: "Unavailable",
         serviceHint: "Services like this are tracked as Available or Unavailable instead of a stock count.",
+        aiScanButton: "AI Snap & Fill — Take a Photo",
+        aiScanning: "Reading photo…",
+        aiScanError: "Couldn't read that photo — please enter the details manually.",
       },
       storeEdit: {
         title: "Edit Store Profile",
@@ -506,6 +509,9 @@ export const translations = {
         markAvailable: "Meron",
         markUnavailable: "Wala",
         serviceHint: "Ang mga serbisyong tulad nito ay sinusubaybayan bilang Meron o Wala sa halip na bilang ng stock.",
+        aiScanButton: "AI Snap & Fill — Kumuha ng Litrato",
+        aiScanning: "Binabasa ang litrato…",
+        aiScanError: "Hindi nabasa ang litratong iyon — pakilagay na lang nang manu-mano ang detalye.",
       },
       storeEdit: {
         title: "I-edit ang Profile ng Tindahan",

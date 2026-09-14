@@ -10,7 +10,7 @@ import { X, MapPin, Phone, Clock, Package, Navigation, ExternalLink } from "luci
 import { formatLastUpdated, formatPrice } from "../hooks/useStores";
 import { useLanguage } from "../i18n/LanguageContext";
 import { buildGoogleMapsViewLink } from "../utils/googleMapsLink";
-import { SERVICE_CATEGORY_EMOJI } from "./ProductFormModal";
+import { SERVICE_CATEGORY_EMOJI } from "../constants/productCategories";
 
 // ─── Status badge config ──────────────────────────────────────────────────────
 // Colors reference CSS custom properties (defined in :root, App.css)
