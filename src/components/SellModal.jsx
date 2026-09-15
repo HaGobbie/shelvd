@@ -3,15 +3,42 @@
 // sheet, since this is a single-field quick action), matching
 // ConfirmDeleteModal.jsx's visual language.
 //
+// REVIVED: this component was built, then superseded mid-migration by
+// NewTransactionModal.jsx's multi-item cart flow — but never deleted or
+// wired back in, and never translated. Bringing it back deliberately,
+// because the two flows solve different problems:
+//   - NewTransactionModal: a customer bought several different things —
+//     open a sheet, pick each product, add to cart, submit together.
+//   - SellModal (this file): a customer bought ONE thing, which is the
+//     overwhelmingly common case at a sari-sari store. One tap on the
+//     product card, one number, one confirm.
+// Without this, the only correct way to log ANY sale was the heavier
+// multi-item sheet — meanwhile the fastest, most obvious interaction on
+// a product card (the quantity stepper's "−" button) can only log
+// Spoiled / Personal Use / Other, with no "Sold" option at all. That
+// meant a real sale recorded via the fast path silently produced $0
+// logged earnings — actively undermining the Daily Cash-Out card, which
+// only counts transactions where transactionType === "sold". This modal
+// is the fix: the fast path and the correct path are now the same path.
+//
 // Calls recordSale() (useStores.js), which wraps the inventory decrement
 // + transaction log insert in one atomic Postgres RPC — see
 // 18_inventory_transactions_ledger.sql for why this isn't two separate
-// client calls.
+// client calls. record_sale() logs transaction_type = 'sold' with real
+// earnings, which is exactly what Daily Cash-Out / Monthly Revenue read.
+//
+// NOT rendered for service products (is_service) — "how many did you
+// sell" doesn't mean anything for a binary Available/Unavailable
+// service; those use ServiceAvailabilityToggle instead. Enforced by the
+// caller (OwnerDashboard.jsx) not offering the Sell button for services
+// in the first place, but this file only ever deals in countable
+// products regardless.
 
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, ShoppingCart, AlertTriangle } from "lucide-react";
 import { recordSale, formatPrice } from "../hooks/useStores";
+import { useLanguage } from "../i18n/LanguageContext";
 
 const overlayVariants = {
   hidden:  { opacity: 0 },
@@ -34,6 +61,7 @@ const dialogVariants = {
  * }} props
  */
 export default function SellModal({ isOpen, onClose, product, onSold }) {
+  const { t } = useLanguage();
   const [quantitySold, setQuantitySold] = useState("1");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -61,7 +89,7 @@ export default function SellModal({ isOpen, onClose, product, onSold }) {
 
     if (saleError) {
       console.error("Sale failed:", saleError);
-      setError(saleError.message || "Could not record this sale. Please try again.");
+      setError(saleError.message || t("owner.sell.saveFailed"));
       setSaving(false);
       return;
     }
@@ -89,19 +117,19 @@ export default function SellModal({ isOpen, onClose, product, onSold }) {
             initial="hidden" animate="visible" exit="exit"
             role="dialog"
             aria-modal="true"
-            aria-label={`Sell ${product.name}`}
+            aria-label={t("owner.sell.dialogAria", product.name)}
           >
             <div className="confirm-dialog__icon-wrap">
               <ShoppingCart size={28} className="confirm-dialog__icon" />
             </div>
 
-            <h3 className="confirm-dialog__title">Sell {product.name}</h3>
+            <h3 className="confirm-dialog__title">{t("owner.sell.title", product.name)}</h3>
             <p className="confirm-dialog__desc">
-              {product.quantity} {product.unit || "piece"} currently in stock
+              {t("owner.sell.inStock", product.quantity, product.unit || "piece")}
             </p>
 
             <div className="pform__field" style={{ marginTop: 16, textAlign: "left" }}>
-              <label className="pform__label" htmlFor="sell-quantity">Quantity Sold</label>
+              <label className="pform__label" htmlFor="sell-quantity">{t("owner.sell.quantityLabel")}</label>
               <input
                 id="sell-quantity"
                 className="pform__input"
@@ -124,21 +152,21 @@ export default function SellModal({ isOpen, onClose, product, onSold }) {
                 fontWeight: 700, fontSize: 15,
               }}
             >
-              <span>Earnings</span>
+              <span>{t("owner.sell.earnings")}</span>
               <span>{formatPrice(previewEarnings)}</span>
             </div>
 
             {exceedsStock && (
               <p className="confirm-dialog__error">
                 <AlertTriangle size={14} style={{ display: "inline", marginRight: 4 }} />
-                Only {product.quantity} in stock — can't sell {qtyNum}.
+                {t("owner.sell.exceedsStock", product.quantity, qtyNum)}
               </p>
             )}
             {error && <p className="confirm-dialog__error">⚠️ {error}</p>}
 
             <div className="confirm-dialog__actions">
               <button type="button" className="confirm-dialog__cancel" onClick={onClose} disabled={saving}>
-                <X size={16} /> Cancel
+                <X size={16} /> {t("owner.sell.cancel")}
               </button>
               <button
                 type="button"
@@ -150,7 +178,7 @@ export default function SellModal({ isOpen, onClose, product, onSold }) {
                 {saving ? (
                   <span className="map-loading-spinner" style={{ width: 16, height: 16, borderWidth: 2, borderTopColor: "#fff" }} />
                 ) : (
-                  <><ShoppingCart size={16} /> Confirm Sale</>
+                  <><ShoppingCart size={16} /> {t("owner.sell.confirm")}</>
                 )}
               </button>
             </div>
@@ -160,3 +188,5 @@ export default function SellModal({ isOpen, onClose, product, onSold }) {
     </AnimatePresence>
   );
 }
+
+

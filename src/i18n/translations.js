@@ -64,6 +64,9 @@ export const translations = {
     },
     common: {
       language: "Language",
+      oauthStuck: "Sign-in is taking longer than expected. This can happen if the redirect URL isn't in Supabase's allowed Redirect URLs list.",
+      startOver: "Start Over",
+      offlineBanner: "You're offline — changes won't save until you're back online.",
     },
 
     // ── Owner-facing (dashboard, forms, modals) ──────────────────────────
@@ -348,6 +351,18 @@ export const translations = {
         noSalesMonth: "No sales recorded this month.",
         allMonths: "All Months",
       },
+      sell: {
+        dialogAria: (name) => `Sell ${name}`,
+        title: (name) => `Sell ${name}`,
+        inStock: (qty, unit) => `${qty} ${unit} currently in stock`,
+        quantityLabel: "Quantity Sold",
+        earnings: "Earnings",
+        exceedsStock: (available, tried) => `Only ${available} in stock — can't sell ${tried}.`,
+        saveFailed: "Could not record this sale. Please try again.",
+        cancel: "Cancel",
+        confirm: "Confirm Sale",
+        sellAria: (name) => `Sell ${name}`,
+      },
       dashboard: {
         myStore: "My Store",
         addStore: "Add Store",
@@ -453,6 +468,9 @@ export const translations = {
     },
     common: {
       language: "Wika",
+      oauthStuck: "Mas matagal sa inaasahan ang pag-sign in. Maaaring dahil ito sa redirect URL na hindi kasama sa allowed Redirect URLs list ng Supabase.",
+      startOver: "Magsimula Muli",
+      offlineBanner: "Naka-offline ka — hindi mase-save ang mga pagbabago hangga't wala kang internet.",
     },
 
     owner: {
@@ -730,6 +748,18 @@ export const translations = {
         unitsSold: (n) => `${n} yunit ang nabenta`,
         noSalesMonth: "Walang naitalang benta ngayong buwan.",
         allMonths: "Lahat ng Buwan",
+      },
+      sell: {
+        dialogAria: (name) => `Ibenta ang ${name}`,
+        title: (name) => `Ibenta ang ${name}`,
+        inStock: (qty, unit) => `${qty} ${unit} ang natitira`,
+        quantityLabel: "Dami na Nabenta",
+        earnings: "Kita",
+        exceedsStock: (available, tried) => `${available} na lang ang stock — hindi puwedeng ibenta ang ${tried}.`,
+        saveFailed: "Hindi naitala ang benta. Pakisubukan muli.",
+        cancel: "Kanselahin",
+        confirm: "Kumpirmahin ang Benta",
+        sellAria: (name) => `Ibenta ang ${name}`,
       },
       dashboard: {
         myStore: "Aking Tindahan",

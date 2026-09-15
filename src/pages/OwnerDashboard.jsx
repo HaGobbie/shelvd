@@ -61,6 +61,7 @@ import StoreRegistrationForm from "../components/StoreRegistrationForm";
 import StoreEditModal from "../components/StoreEditModal";
 import BulkImportModal from "../components/BulkImportModal";
 import NewTransactionModal from "../components/NewTransactionModal";
+import SellModal from "../components/SellModal";
 import DailyTransactionsModal from "../components/DailyTransactionsModal";
 import MonthlyRevenueModal from "../components/MonthlyRevenueModal";
 import OnboardingTour, { hasSeenTour } from "../components/OnboardingTour";
@@ -282,7 +283,7 @@ function formatStockLine(quantity, unit, language) {
   return `${qty} ${displayUnit}`;
 }
 
-function ProductCard({ product, onQuantityChange, onEdit, onDelete, tourId }) {
+function ProductCard({ product, onQuantityChange, onEdit, onDelete, onSell, tourId }) {
   const { t, language } = useLanguage();
   const [expanded, setExpanded] = useState(false);
   const [localSaved, setLocalSaved] = useState(false);
@@ -322,6 +323,14 @@ function ProductCard({ product, onQuantityChange, onEdit, onDelete, tourId }) {
           </div>
         </button>
         <div className="product-card__actions">
+          {!product.isService && (
+            <button type="button" className="product-card__action-btn product-card__action-btn--sell"
+              onClick={() => onSell(product)} disabled={(product.quantity ?? 0) <= 0}
+              aria-label={t("owner.sell.sellAria", product.name)}
+              title={(product.quantity ?? 0) <= 0 ? t("status.out") : t("owner.sell.sellAria", product.name)}>
+              <ShoppingCart size={15} strokeWidth={2} />
+            </button>
+          )}
           <button type="button" className="product-card__action-btn product-card__action-btn--edit"
             onClick={() => onEdit(product)} aria-label={t("owner.dashboard.editAria", product.name)} title={t("owner.dashboard.edit")}>
             <Pencil size={15} strokeWidth={2} />
@@ -817,6 +826,8 @@ export default function OwnerDashboard({ session }) {
   const [editingProduct, setEditingProduct]   = useState(null);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [deletingProduct, setDeletingProduct] = useState(null);
+  const [sellModalOpen, setSellModalOpen]     = useState(false);
+  const [sellingProduct, setSellingProduct]   = useState(null);
   const [storeEditOpen, setStoreEditOpen]     = useState(false);
   const [bulkImportOpen, setBulkImportOpen]   = useState(false);
   const [newTransactionOpen, setNewTransactionOpen] = useState(false);
@@ -866,6 +877,7 @@ export default function OwnerDashboard({ session }) {
   const openAddModal    = ()   => { setEditingProduct(null);    setFormModalOpen(true); };
   const openEditModal   = (p)  => { setEditingProduct(p);       setFormModalOpen(true); };
   const openDeleteModal = (p)  => { setDeletingProduct(p);      setDeleteModalOpen(true); };
+  const openSellModal   = (p)  => { setSellingProduct(p);       setSellModalOpen(true); };
 
   const handleExportInventory = () => {
     exportCurrentInventoryCSV(inventory, myStore?.name);
@@ -1238,7 +1250,7 @@ export default function OwnerDashboard({ session }) {
             {filteredInventory.map((product, index) => (
               <ProductCard key={product.id} product={product}
                 tourId={index === 0 ? "first-product-card" : undefined}
-                onQuantityChange={handleQuantityChange} onEdit={openEditModal} onDelete={openDeleteModal} />
+                onQuantityChange={handleQuantityChange} onEdit={openEditModal} onDelete={openDeleteModal} onSell={openSellModal} />
             ))}
           </AnimatePresence>
         </div>
@@ -1246,6 +1258,8 @@ export default function OwnerDashboard({ session }) {
 
       <ProductFormModal isOpen={formModalOpen} onClose={() => setFormModalOpen(false)}
         storeId={myStore?.id} initialData={editingProduct} />
+      <SellModal isOpen={sellModalOpen} onClose={() => setSellModalOpen(false)}
+        product={sellingProduct} onSold={() => setSellModalOpen(false)} />
       <ConfirmDeleteModal isOpen={deleteModalOpen} onClose={() => setDeleteModalOpen(false)}
         storeId={myStore?.id} product={deletingProduct} />
       <StoreEditModal isOpen={storeEditOpen} onClose={() => setStoreEditOpen(false)} store={myStore} />

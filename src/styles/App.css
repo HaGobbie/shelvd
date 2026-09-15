@@ -1518,6 +1518,11 @@ html[data-theme="dark"] .pform__select {
   color: var(--color-text-muted);
 }
 
+.product-card__action-btn--sell:hover {
+  background: var(--color-available-bg);
+  color: var(--color-available);
+}
+
 .product-card__action-btn--edit:hover {
   background: rgba(44, 62, 80, 0.07);
   color: var(--color-brand-primary);
@@ -1528,7 +1533,14 @@ html[data-theme="dark"] .pform__select {
   color: var(--color-out);
 }
 
-/* Divider between edit and delete buttons */
+/* Divider between stacked action buttons. Delete always has one above it
+   (Edit always precedes it). Edit only gets one when Sell precedes it —
+   :not(:first-child) so a service product (no Sell button, Edit is
+   first) doesn't get a stray line with nothing above it to divide from. */
+.product-card__action-btn--edit:not(:first-child) {
+  border-top: 1px solid var(--color-border);
+}
+
 .product-card__action-btn--delete {
   border-top: 1px solid var(--color-border);
 }
@@ -2018,3 +2030,5 @@ html[data-theme="dark"] .pform__select {
     justify-content: center;
   }
 }
+
+

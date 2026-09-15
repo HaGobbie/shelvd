@@ -14,13 +14,14 @@
 //      instead of running its own separate getSession() round trip.
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { Store, Languages, Sun, Moon, HelpCircle } from "lucide-react";
+import { Store, Languages, Sun, Moon, HelpCircle, WifiOff } from "lucide-react";
 
 import MapContainer from "./components/MapContainer";
 import SearchBar from "./components/SearchBar";
 import StoreDetails from "./components/StoreDetails";
 import OwnerDashboard from "./pages/OwnerDashboard";
 import { useMapMarkers, useStoreDetails, useDebouncedSearchMatches } from "./hooks/useStores";
+import { useOnlineStatus } from "./hooks/useOnlineStatus";
 import { supabase } from "./config/supabaseClient";
 import { LanguageProvider, useLanguage } from "./i18n/LanguageContext";
 import { ThemeProvider, useTheme } from "./theme/ThemeContext";
@@ -91,10 +92,39 @@ function useHashRoute() {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * OfflineBanner — see hooks/useOnlineStatus.js header for scope: this is
+ * an ambient heads-up only, not a queueing/retry system. Fixed at the
+ * very top of the viewport, above everything else, on both the public
+ * map and the Owner Dashboard — the two screens where losing connection
+ * mid-action actually matters.
+ */
+function OfflineBanner() {
+  const { t } = useLanguage();
+  return (
+    <div
+      role="status"
+      style={{
+        position: "fixed", top: 0, left: 0, right: 0, zIndex: 9998,
+        display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+        padding: "8px 16px calc(8px + env(safe-area-inset-top, 0px))",
+        background: "var(--color-out)", color: "#fff",
+        fontSize: 12.5, fontWeight: 700, textAlign: "center",
+      }}
+    >
+      <WifiOff size={14} strokeWidth={2.4} />
+      {t("common.offlineBanner")}
+    </div>
+  );
+}
+
 function AppShell() {
   const [route, setRoute] = useHashRoute();
   const { language, setLanguage, t } = useLanguage();
   const { theme, toggleTheme } = useTheme();
+  const isOnline = useOnlineStatus();
 
   // ─── Global Supabase auth session ────────────────────────────────────────
   const [session, setSession] = useState(null);
@@ -151,10 +181,7 @@ function AppShell() {
     const stuckTimer = HAD_OAUTH_HASH_ON_LOAD
       ? window.setTimeout(() => {
           if (isMounted && !oauthHandledRef.current) {
-            setOauthStuckError(
-              "Sign-in is taking longer than expected. This can happen if the " +
-                "redirect URL isn't in Supabase's allowed Redirect URLs list."
-            );
+            setOauthStuckError(true);
           }
         }, 10000)
       : null;
@@ -267,7 +294,7 @@ function AppShell() {
         }}
       >
         <p style={{ maxWidth: 360, color: "var(--color-text-secondary, #555)" }}>
-          {oauthStuckError}
+          {t("common.oauthStuck")}
         </p>
         <a
           href={window.location.origin + window.location.pathname}
@@ -280,7 +307,7 @@ function AppShell() {
             textDecoration: "none",
           }}
         >
-          Start Over
+          {t("common.startOver")}
         </a>
       </div>
     );
@@ -321,6 +348,7 @@ function AppShell() {
           overflow: "visible",
         }}
       >
+        {!isOnline && <OfflineBanner />}
         <OwnerDashboard session={session} />
         {/* Nav back to map */}
         <a
@@ -352,6 +380,7 @@ function AppShell() {
   // ─── Public Map view (default) ──────────────────────────────────────────
   return (
     <div className="app-container">
+      {!isOnline && <OfflineBanner />}
       {/* Full-bleed map */}
       <MapContainer
         markers={markers}
@@ -538,3 +567,5 @@ export default function App() {
     </ErrorBoundary>
   );
 }
+
+
