@@ -1,6 +1,20 @@
 // src/components/StoreEditModal.jsx
 // Bottom-sheet modal that lets an owner edit their store's profile
-// and GIS location (address + draggable Leaflet pin).
+// and GIS location (address search + a center-fixed pin you pan the
+// map under — see CenterTracker below).
+//
+// LOCATION UX: this used to have its own separate draggable-marker
+// pattern (tap the map or drag a small pin) — a real, user-visible
+// inconsistency once StoreRegistrationForm.jsx moved to the "pin stays
+// in the middle, you move the map" pattern for registration. An owner
+// would learn the easier pattern signing up, then hit the harder one
+// the first time they needed to fix their location here. Ported the
+// same interaction over for that reason. Unlike registration, this
+// does NOT add a "is this correct?" confirm-first step — the owner
+// came to this screen on purpose to check or change something, and
+// there's already an explicit Save button gating the actual write, so
+// that extra checkpoint (useful against a silent GPS auto-guess during
+// signup) doesn't add anything meaningful here.
 //
 // On save → supabase.from('stores').update(...).eq('id', store.id) with:
 //   name, type, owner_name, contact_number, address, location (PostGIS point)
@@ -20,7 +34,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   MapContainer,
   TileLayer,
-  Marker,
   useMapEvents,
   useMap,
 } from "react-leaflet";
@@ -50,26 +63,6 @@ L.Icon.Default.mergeOptions({
   shadowUrl:     "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
 });
 
-// Terracotta draggable pin — same as registration form for visual
-// consistency. NOTE: this is a literal hex, not var(--color-brand-primary)
-// — it's baked into a raw SVG string for L.divIcon(), and SVG fill="..."
-// attributes don't support var() CSS syntax (only an actual style="..."
-// property does). If the brand accent color changes again, this needs
-// updating by hand in both this file and StoreRegistrationForm.jsx.
-const STORE_PIN_ICON = L.divIcon({
-  html: `
-    <div style="position:relative;width:36px;height:36px;">
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="36" height="36">
-        <path fill="#C85A27" stroke="#fff" stroke-width="1.2"
-          d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/>
-        <circle cx="12" cy="9" r="2.8" fill="white"/>
-      </svg>
-    </div>`,
-  className: "",
-  iconSize: [36, 36],
-  iconAnchor: [18, 36],
-});
-
 const STORE_TYPES = [
   "General Store", "Sari-sari Store", "Mini Grocery", "Pharmacy",
   "Bakery", "Meat & Fish Stall", "Vegetable Stall", "Hardware Store", "Other",
@@ -89,8 +82,25 @@ const sheetVariants = {
 };
 
 // ─── Leaflet inner helpers ────────────────────────────────────────────────────
-function ClickHandler({ onMapClick }) {
-  useMapEvents({ click(e) { onMapClick(e.latlng.lat, e.latlng.lng); } });
+
+/**
+ * CenterTracker — same mechanism as StoreRegistrationForm.jsx's version
+ * (duplicated here rather than shared, matching this file's existing
+ * pattern of keeping its own copy of FlyController/ForceMapHeight — see
+ * the note on STORE_TYPES above for the reasoning). The pin is a plain
+ * CSS element fixed at the exact center of the screen; this just reads
+ * back wherever the map ends up centered once panning settles
+ * (`moveend`) and reports that point up as the real coordinate. No
+ * Leaflet Marker involved, so there's nothing small to miss with a
+ * fingertip.
+ */
+function CenterTracker({ onCenterChange }) {
+  const map = useMapEvents({
+    moveend() {
+      const c = map.getCenter();
+      onCenterChange(c.lat, c.lng);
+    },
+  });
   return null;
 }
 
@@ -243,16 +253,9 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
     }
   }, [searchQuery, t]);
 
-  const handleMapClick = useCallback((newLat, newLng) => {
+  const handleCenterChange = useCallback((newLat, newLng) => {
     setLat(newLat);
     setLng(newLng);
-    setErrors((prev) => ({ ...prev, coords: undefined }));
-  }, []);
-
-  const handleMarkerDrag = useCallback((e) => {
-    const pos = e.target.getLatLng();
-    setLat(pos.lat);
-    setLng(pos.lng);
     setErrors((prev) => ({ ...prev, coords: undefined }));
   }, []);
 
@@ -491,12 +494,10 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
                     )}
                   </div>
 
-                  {/* Interactive map */}
-                  <div className="regform__map-wrapper">
+                  {/* Interactive map — pin fixed at center, pan the map to move it */}
+                  <div className="regform__map-wrapper" style={{ position: "relative" }}>
                     <div className="regform__map-hint">
-                      {hasCoords
-                        ? `📍 ${lat.toFixed(6)}, ${lng.toFixed(6)}`
-                        : t("owner.storeEdit.tapToPlace")}
+                      {t("owner.storeEdit.adjustHint")}
                     </div>
                     <MapContainer
                       center={hasCoords ? [lat, lng] : [7.0508, 125.5694]}
@@ -513,45 +514,31 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
                         subdomains="abcd"
                         maxZoom={20}
                       />
-                      <ClickHandler onMapClick={handleMapClick} />
+                      <CenterTracker onCenterChange={handleCenterChange} />
                       <FlyController target={flyTarget} />
                       <ForceMapHeight height="260px" />
-                      {hasCoords && (
-                        <Marker
-                          position={[lat, lng]}
-                          icon={STORE_PIN_ICON}
-                          draggable
-                          eventHandlers={{ dragend: handleMarkerDrag }}
-                        />
-                      )}
                     </MapContainer>
-                  </div>
 
-                  {/* Manual lat/lng inputs */}
-                  {hasCoords && (
-                    <div className="regform__coord-row" style={{ marginTop: 12 }}>
-                      <div className="regform__coord-field">
-                        <label className="regform__label">{t("owner.storeEdit.latitude")}</label>
-                        <input
-                          className="pform__input"
-                          type="number"
-                          step="0.000001"
-                          value={lat}
-                          onChange={(e) => setLat(parseFloat(e.target.value))}
-                        />
-                      </div>
-                      <div className="regform__coord-field">
-                        <label className="regform__label">{t("owner.storeEdit.longitude")}</label>
-                        <input
-                          className="pform__input"
-                          type="number"
-                          step="0.000001"
-                          value={lng}
-                          onChange={(e) => setLng(parseFloat(e.target.value))}
-                        />
-                      </div>
-                    </div>
-                  )}
+                    {/* The pin — plain CSS, fixed dead-center, never
+                        moves. Moving the MAP under it is the entire
+                        interaction (see CenterTracker above). */}
+                    <div
+                      aria-hidden="true"
+                      style={{
+                        position: "absolute", top: "50%", left: "50%",
+                        transform: "translate(-50%, -100%)",
+                        pointerEvents: "none", zIndex: 500,
+                        filter: "drop-shadow(0 2px 3px rgba(0,0,0,0.35))",
+                      }}
+                      dangerouslySetInnerHTML={{
+                        __html: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="36" height="36">
+                          <path fill="#C85A27" stroke="#fff" stroke-width="1.2"
+                            d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/>
+                          <circle cx="12" cy="9" r="2.8" fill="white"/>
+                        </svg>`,
+                      }}
+                    />
+                  </div>
                 </div>
               )}
 
@@ -667,3 +654,5 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
     </AnimatePresence>
   );
 }
+
+

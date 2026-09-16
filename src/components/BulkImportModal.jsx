@@ -1,17 +1,41 @@
 // src/components/BulkImportModal.jsx
-// Bulk merchandise import via CSV — accepts ANY CSV export (Square,
-// Shopify, plain Excel, etc.), no rigid template required.
+// Add many items at once — two entry paths, one shared review screen:
+//   - "Scan a Receipt": photograph a wholesaler receipt, Gemini extracts
+//     line items (see scanReceiptImage in geminiScanner.js and the
+//     scan-receipt-image Edge Function). Targets the artifact a
+//     micro-merchant actually has in hand after a restocking trip —
+//     most don't have a CSV export from their supplier, but they do
+//     have a printed receipt.
+//   - "Upload a Spreadsheet": the original CSV path — accepts ANY CSV
+//     export (Square, Shopify, plain Excel, etc.), no rigid template
+//     required, via the smart column-guessing below.
+// Both paths land in the exact same `reviewRows` state and the exact
+// same review UI, so a receipt scan (noisier, since OCR-ish reading of
+// a faded thermal receipt is a genuinely harder task than reading a CSV
+// cell) gets the same safety net as a messy CSV: anything uncertain
+// shows up as a flagged, editable card before it's ever saved.
 //
-// STATUS AUTOMATION: the review table no longer has a Status column —
-// status is fully derived server-side from quantity vs
-// low_stock_threshold (see 17_status_automation_and_search_price.sql),
-// so a manually-picked status here would just get silently overwritten
-// the instant the row is written. Low Stock Threshold replaces it as
-// the real, meaningful per-row input.
+// REVIEW STEP UX: this used to be a single nine-column spreadsheet-style
+// table, edited inline. That's a real mismatch for a mobile-first app
+// built around not asking non-technical owners to read spreadsheets —
+// it was the most "corporate database tool"-looking screen in the whole
+// app. Rebuilt as a card-based, flagged-first list instead:
+//   - Rows that need attention (missing name, bad price, duplicate SKU,
+//     or — for a receipt scan — the model's own low_confidence flag)
+//     render as expanded, editable cards right at the top.
+//   - Everything that already looks fine stays collapsed behind a single
+//     "Show all N items" toggle, one compact line per item (tap a line
+//     to expand it if something does need a tweak).
+//
+// STATUS AUTOMATION: the review table has no Status column — status is
+// fully derived server-side from quantity vs low_stock_threshold (see
+// 17_status_automation_and_search_price.sql), so a manually-picked
+// status here would just get silently overwritten the instant the row
+// is written. Low Stock Threshold is the real, meaningful per-row input.
 //
 // Security: store_id is injected client-side from the trusted `storeId`
 // prop for every row, in bulkUpsertInventory() (useStores.js) — never
-// taken from the CSV, even if a column happened to be named that.
+// taken from the CSV or a receipt scan.
 //
 // Requires: npm install papaparse
 
@@ -26,7 +50,11 @@ import {
   CheckCircle2,
   ArrowRight,
   ArrowLeft,
+  Pencil,
+  ChevronDown,
+  Camera,
 } from "lucide-react";
+import { scanReceiptImage } from "../services/geminiScanner";
 import { bulkUpsertInventory } from "../hooks/useStores";
 import {
   TARGET_FIELDS,
@@ -90,11 +118,189 @@ function buildReviewRows(csvRows, mapping, t) {
 }
 
 /**
+ * buildReviewRowsFromReceiptItems
+ * Same output shape as buildReviewRows (id, name, category, price,
+ * quantity, ...) so ReviewItemCard and every flagging/count helper
+ * below work identically regardless of which entry path produced the
+ * rows. A receipt item's own low_confidence flag becomes a normal
+ * validation error — that's what puts it in the flagged section
+ * alongside a missing name or a bad price, without needing any
+ * separate "this came from AI" concept anywhere else in this file.
+ */
+function buildReviewRowsFromReceiptItems(items, t) {
+  return items.map((item) => {
+    const errors = [];
+    if (!item.name) errors.push(t("owner.bulkImport.missingName"));
+    if (item.price === null) errors.push(t("owner.bulkImport.invalidPrice", ""));
+    if (item.lowConfidence) errors.push(t("owner.bulkImport.lowConfidence"));
+
+    return {
+      id: nextRowId++,
+      name: item.name,
+      category: item.category || "Uncategorized",
+      price: item.price ?? "",
+      priceRaw: item.price ?? "",
+      quantity: item.quantity,
+      lowStockThreshold: 5,
+      sku: "",
+      description: "",
+      unit: item.unit || "piece",
+      errors,
+      excluded: false,
+    };
+  });
+}
+
+/**
+ * ReviewItemCard
+ * Compact, one-line summary by default for a row that already looks
+ * fine (tap it to expand into an editable card). Rows that need
+ * attention always render in the expanded, editable form directly —
+ * there's nothing to collapse when something actually needs fixing.
+ */
+function ReviewItemCard({ row, dupSku, flagged, expanded, onToggleExpand, onChange, onToggleExcluded, t }) {
+  if (!flagged && !expanded) {
+    return (
+      <div
+        className="bulkreview__row-compact"
+        onClick={onToggleExpand}
+        role="button"
+        tabIndex={0}
+        style={{ opacity: row.excluded ? 0.45 : 1 }}
+      >
+        <input
+          type="checkbox"
+          checked={!row.excluded}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => onToggleExcluded(!e.target.checked)}
+        />
+        <div className="bulkreview__row-compact-info">
+          <span className="bulkreview__row-compact-name">{row.name}</span>
+          <span className="bulkreview__row-compact-meta">
+            {row.category} · ₱{row.price} · {row.quantity} {row.unit}
+          </span>
+        </div>
+        <Pencil size={14} style={{ opacity: 0.4, flexShrink: 0 }} />
+      </div>
+    );
+  }
+
+  return (
+    <div className={`bulkreview__card ${flagged ? "bulkreview__card--flagged" : ""}`}>
+      <div className="bulkreview__card-header">
+        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={!row.excluded}
+            onChange={(e) => onToggleExcluded(!e.target.checked)}
+          />
+          {flagged && (
+            <span className="bulkreview__flag-badge">
+              <AlertTriangle size={12} /> {t("owner.bulkImport.needsAttentionBadge")}
+            </span>
+          )}
+        </label>
+        {!flagged && (
+          <button type="button" className="bulkreview__collapse-link" onClick={onToggleExpand}>
+            {t("owner.bulkImport.collapseDone")}
+          </button>
+        )}
+      </div>
+
+      {row.errors.length > 0 && (
+        <p className="bulkreview__error-line">⚠️ {row.errors.join(" ")}</p>
+      )}
+      {dupSku && <p className="bulkreview__error-line">⚠️ {t("owner.bulkImport.duplicateSku")}</p>}
+
+      <div className="pform__field">
+        <label className="pform__label">{t("owner.bulkImport.colName")}</label>
+        <input
+          className="pform__input"
+          value={row.name}
+          disabled={row.excluded}
+          onChange={(e) => onChange({ name: e.target.value })}
+        />
+      </div>
+
+      <div style={{ display: "flex", gap: 8 }}>
+        <div className="pform__field" style={{ flex: 1 }}>
+          <label className="pform__label">{t("owner.bulkImport.colCategory")}</label>
+          <input
+            className="pform__input"
+            value={row.category}
+            disabled={row.excluded}
+            onChange={(e) => onChange({ category: e.target.value })}
+          />
+        </div>
+        <div className="pform__field" style={{ flex: 1 }}>
+          <label className="pform__label">{t("owner.bulkImport.colPrice")}</label>
+          <input
+            className="pform__input"
+            style={{ borderColor: row.errors.some((e) => e.toLowerCase().includes("price")) ? "var(--color-out)" : undefined }}
+            value={row.price}
+            disabled={row.excluded}
+            placeholder="0.00"
+            onChange={(e) => onChange({ price: e.target.value })}
+          />
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 8 }}>
+        <div className="pform__field" style={{ flex: 1 }}>
+          <label className="pform__label">{t("owner.bulkImport.colQuantity")}</label>
+          <input
+            className="pform__input"
+            type="number" min="0" step="1"
+            value={row.quantity}
+            disabled={row.excluded}
+            onChange={(e) => onChange({ quantity: e.target.value })}
+          />
+        </div>
+        <div className="pform__field" style={{ flex: 1 }}>
+          <label className="pform__label">{t("owner.bulkImport.colUnit")}</label>
+          <input
+            className="pform__input"
+            value={row.unit}
+            disabled={row.excluded}
+            placeholder="piece"
+            onChange={(e) => onChange({ unit: e.target.value })}
+          />
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 8 }}>
+        <div className="pform__field" style={{ flex: 1 }}>
+          <label className="pform__label">{t("owner.bulkImport.colSku")}</label>
+          <input
+            className="pform__input"
+            style={{ borderColor: dupSku ? "var(--color-out)" : undefined }}
+            value={row.sku}
+            disabled={row.excluded}
+            placeholder={t("owner.bulkImport.optional")}
+            onChange={(e) => onChange({ sku: e.target.value })}
+          />
+        </div>
+        <div className="pform__field" style={{ flex: 1 }}>
+          <label className="pform__label">{t("owner.bulkImport.colThreshold")}</label>
+          <input
+            className="pform__input"
+            type="number" min="0" step="1"
+            value={row.lowStockThreshold}
+            disabled={row.excluded}
+            onChange={(e) => onChange({ lowStockThreshold: e.target.value })}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
  * @param {{ isOpen: boolean, onClose: Function, storeId: string, onImported?: Function }} props
  */
 export default function BulkImportModal({ isOpen, onClose, storeId, onImported }) {
   const { t } = useLanguage();
-  const [step, setStep] = useState("upload");
+  const [step, setStep] = useState("choose");
   const [fileName, setFileName] = useState("");
   const [parseError, setParseError] = useState("");
   const [csvHeaders, setCsvHeaders] = useState([]);
@@ -104,10 +310,27 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
   const [overwrite, setOverwrite] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState(null);
+  const [showAllReady, setShowAllReady] = useState(false);
+  const [expandedIds, setExpandedIds] = useState(() => new Set());
+  // Which entry path produced the current reviewRows — "csv" or
+  // "receipt" — so the review step's Back button returns to the right
+  // place (the mapping screen only exists for the CSV path).
+  const [source, setSource] = useState(null);
+  const [receiptScanning, setReceiptScanning] = useState(false);
+  const [receiptError, setReceiptError] = useState("");
   const fileInputRef = useRef(null);
+  const receiptFileInputRef = useRef(null);
+
+  const toggleExpanded = (id) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
 
   const resetAll = useCallback(() => {
-    setStep("upload");
+    setStep("choose");
     setFileName("");
     setParseError("");
     setCsvHeaders([]);
@@ -117,6 +340,11 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
     setOverwrite(false);
     setImporting(false);
     setImportResult(null);
+    setShowAllReady(false);
+    setExpandedIds(new Set());
+    setSource(null);
+    setReceiptScanning(false);
+    setReceiptError("");
   }, []);
 
   const handleClose = () => {
@@ -163,7 +391,45 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
   const proceedToReview = () => {
     const rows = buildReviewRows(csvRows, columnMapping, t);
     setReviewRows(rows);
+    setSource("csv");
     setStep("review");
+  };
+
+  /**
+   * handleReceiptFile — the "Scan a Receipt" path. Goes straight from
+   * photo to the review screen, skipping the column-mapping step
+   * entirely — there's no concept of "mapping columns" for an AI-read
+   * item list, only reviewing what came out of it. Any error here
+   * (network failure, unreadable photo, zero items found) surfaces on
+   * the "choose" screen so the owner can just try again or switch to
+   * the CSV path instead, rather than getting stuck on a dead-end step.
+   */
+  const handleReceiptFile = async (file) => {
+    if (!file) return;
+    setReceiptError("");
+    setReceiptScanning(true);
+    try {
+      const items = await scanReceiptImage(file);
+      if (items.length === 0) {
+        setReceiptError(t("owner.bulkImport.receiptEmpty"));
+        return;
+      }
+      const rows = buildReviewRowsFromReceiptItems(items, t);
+      setReviewRows(rows);
+      setSource("receipt");
+      setStep("review");
+    } catch (err) {
+      console.error("Receipt scan failed:", err);
+      setReceiptError(err.message || t("owner.bulkImport.receiptFailed"));
+    } finally {
+      setReceiptScanning(false);
+    }
+  };
+
+  const handleReceiptFileInputChange = (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-selecting the same file next time
+    handleReceiptFile(file);
   };
 
   // Recomputed from the WHOLE batch every time reviewRows changes —
@@ -277,6 +543,7 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
           <div className="sheet-header__info">
             <h2 className="sheet-header__name">{t("owner.bulkImport.title")}</h2>
             <span className="sheet-header__type">
+              {step === "choose" && t("owner.bulkImport.subtitleChoose")}
               {step === "upload" && t("owner.bulkImport.subtitleUpload")}
               {step === "mapping" && t("owner.bulkImport.subtitleMapping")}
               {step === "review" && t("owner.bulkImport.subtitleReview")}
@@ -290,8 +557,62 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
 
         <div className="sheet-inventory" style={{ padding: "16px 20px 24px", flex: 1, overflowY: "auto" }}>
 
+          {step === "choose" && (
+            <div>
+              <input
+                ref={receiptFileInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                style={{ display: "none" }}
+                onChange={handleReceiptFileInputChange}
+              />
+
+              <button
+                type="button"
+                className="bulkchoose__option"
+                disabled={receiptScanning}
+                onClick={() => receiptFileInputRef.current?.click()}
+              >
+                {receiptScanning ? (
+                  <span className="map-loading-spinner" style={{ width: 22, height: 22, borderWidth: 2.5 }} />
+                ) : (
+                  <Camera size={22} />
+                )}
+                <span className="bulkchoose__option-text">
+                  <span className="bulkchoose__option-title">
+                    {receiptScanning ? t("owner.bulkImport.scanningReceipt") : t("owner.bulkImport.optionReceiptTitle")}
+                  </span>
+                  {!receiptScanning && (
+                    <span className="bulkchoose__option-desc">{t("owner.bulkImport.optionReceiptDesc")}</span>
+                  )}
+                </span>
+              </button>
+
+              {receiptError && (
+                <p className="pform__error" style={{ marginTop: -4, marginBottom: 12 }}>⚠️ {receiptError}</p>
+              )}
+
+              <button
+                type="button"
+                className="bulkchoose__option"
+                disabled={receiptScanning}
+                onClick={() => setStep("upload")}
+              >
+                <FileSpreadsheet size={22} />
+                <span className="bulkchoose__option-text">
+                  <span className="bulkchoose__option-title">{t("owner.bulkImport.optionFileTitle")}</span>
+                  <span className="bulkchoose__option-desc">{t("owner.bulkImport.optionFileDesc")}</span>
+                </span>
+              </button>
+            </div>
+          )}
+
           {step === "upload" && (
             <div>
+              <button type="button" className="bulkreview__collapse-link" style={{ marginBottom: 12, padding: 0 }} onClick={() => setStep("choose")}>
+                <ArrowLeft size={13} style={{ display: "inline", marginRight: 4 }} /> {t("owner.bulkImport.back")}
+              </button>
               <div
                 onClick={() => fileInputRef.current?.click()}
                 onDragOver={(e) => e.preventDefault()}
@@ -379,158 +700,59 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
 
           {step === "review" && (
             <div>
-              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16, fontSize: 13 }}>
-                <span style={{ fontWeight: 700 }}>
-                  {t("owner.bulkImport.rowsReady", readyCount, reviewRows.length)}
-                </span>
-                {flaggedCount > 0 && (
-                  <span style={{ color: "var(--color-out)", fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}>
-                    <AlertTriangle size={14} /> {t("owner.bulkImport.needAttention", flaggedCount)}
-                  </span>
-                )}
-                {flaggedCount > 0 && (
-                  <button
-                    type="button"
-                    onClick={excludeAllFlagged}
-                    style={{ fontSize: 13, textDecoration: "underline", color: "var(--color-text-muted)" }}
-                  >
-                    {t("owner.bulkImport.excludeFlagged")}
-                  </button>
-                )}
-              </div>
+              <p className="bulkreview__summary">
+                {t("owner.bulkImport.itemsFound", reviewRows.length)}
+              </p>
 
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                  <thead>
-                    <tr style={{ textAlign: "left", borderBottom: "1px solid var(--color-border)" }}>
-                      <th style={{ padding: 6 }}></th>
-                      <th style={{ padding: 6 }}>{t("owner.bulkImport.colName")}</th>
-                      <th style={{ padding: 6 }}>{t("owner.bulkImport.colCategory")}</th>
-                      <th style={{ padding: 6 }}>{t("owner.bulkImport.colSku")}</th>
-                      <th style={{ padding: 6 }}>{t("owner.bulkImport.colPrice")}</th>
-                      <th style={{ padding: 6 }}>{t("owner.bulkImport.colQuantity")}</th>
-                      <th style={{ padding: 6 }}>{t("owner.bulkImport.colThreshold")}</th>
-                      <th style={{ padding: 6 }}>{t("owner.bulkImport.colUnit")}</th>
-                      <th style={{ padding: 6 }}>{t("owner.bulkImport.colDescription")}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {reviewRows.map((row) => {
-                      const dupSku = rowHasDuplicateSku(row);
-                      return (
-                      <tr
-                        key={row.id}
-                        style={{
-                          borderBottom: "1px solid var(--color-border-light, #eee)",
-                          opacity: row.excluded ? 0.4 : 1,
-                          background: isRowFlagged(row) && !row.excluded ? "var(--color-out-bg)" : "transparent",
-                        }}
-                      >
-                        <td style={{ padding: 6 }}>
-                          <input
-                            type="checkbox"
-                            checked={!row.excluded}
-                            onChange={(e) => updateRow(row.id, { excluded: !e.target.checked })}
-                            title={row.excluded ? t("owner.bulkImport.excludedTitle") : t("owner.bulkImport.includedTitle")}
-                          />
-                        </td>
-                        <td style={{ padding: 6, minWidth: 160 }}>
-                          <input
-                            className="pform__input"
-                            style={{ padding: "4px 8px", fontSize: 13 }}
-                            value={row.name}
-                            disabled={row.excluded}
-                            onChange={(e) => updateRow(row.id, { name: e.target.value })}
-                          />
-                        </td>
-                        <td style={{ padding: 6, minWidth: 120 }}>
-                          <input
-                            className="pform__input"
-                            style={{ padding: "4px 8px", fontSize: 13 }}
-                            value={row.category}
-                            disabled={row.excluded}
-                            onChange={(e) => updateRow(row.id, { category: e.target.value })}
-                          />
-                        </td>
-                        <td style={{ padding: 6, minWidth: 130 }}>
-                          <input
-                            className="pform__input"
-                            style={{
-                              padding: "4px 8px",
-                              fontSize: 13,
-                              borderColor: dupSku ? "var(--color-out)" : undefined,
-                            }}
-                            value={row.sku}
-                            disabled={row.excluded}
-                            placeholder={t("owner.bulkImport.optional")}
-                            title={dupSku ? t("owner.bulkImport.duplicateSku") : undefined}
-                            onChange={(e) => updateRow(row.id, { sku: e.target.value })}
-                          />
-                        </td>
-                        <td style={{ padding: 6, minWidth: 100 }}>
-                          <input
-                            className="pform__input"
-                            style={{
-                              padding: "4px 8px",
-                              fontSize: 13,
-                              borderColor: row.errors.some((e) => e.toLowerCase().includes("price")) ? "var(--color-out)" : undefined,
-                            }}
-                            value={row.price}
-                            disabled={row.excluded}
-                            placeholder="0.00"
-                            onChange={(e) => updateRow(row.id, { price: e.target.value })}
-                          />
-                        </td>
-                        <td style={{ padding: 6, minWidth: 90 }}>
-                          <input
-                            className="pform__input"
-                            type="number"
-                            min="0"
-                            step="1"
-                            style={{ padding: "4px 8px", fontSize: 13 }}
-                            value={row.quantity}
-                            disabled={row.excluded}
-                            onChange={(e) => updateRow(row.id, { quantity: e.target.value })}
-                          />
-                        </td>
-                        <td style={{ padding: 6, minWidth: 90 }}>
-                          <input
-                            className="pform__input"
-                            type="number"
-                            min="0"
-                            step="1"
-                            style={{ padding: "4px 8px", fontSize: 13 }}
-                            value={row.lowStockThreshold}
-                            disabled={row.excluded}
-                            onChange={(e) => updateRow(row.id, { lowStockThreshold: e.target.value })}
-                          />
-                        </td>
-                        <td style={{ padding: 6, minWidth: 90 }}>
-                          <input
-                            className="pform__input"
-                            style={{ padding: "4px 8px", fontSize: 13 }}
-                            value={row.unit}
-                            disabled={row.excluded}
-                            placeholder="piece"
-                            onChange={(e) => updateRow(row.id, { unit: e.target.value })}
-                          />
-                        </td>
-                        <td style={{ padding: 6, minWidth: 160 }}>
-                          <input
-                            className="pform__input"
-                            style={{ padding: "4px 8px", fontSize: 13 }}
-                            value={row.description}
-                            disabled={row.excluded}
-                            placeholder={t("owner.bulkImport.optional")}
-                            onChange={(e) => updateRow(row.id, { description: e.target.value })}
-                          />
-                        </td>
-                      </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+              {flaggedCount > 0 && (
+                <div className="bulkreview__section">
+                  <div className="bulkreview__section-header" style={{ color: "var(--color-out)" }}>
+                    <AlertTriangle size={14} /> {t("owner.bulkImport.needAttention", flaggedCount)}
+                    <button type="button" className="bulkreview__skip-all-link" onClick={excludeAllFlagged}>
+                      {t("owner.bulkImport.excludeFlagged")}
+                    </button>
+                  </div>
+                  {reviewRows.filter((r) => isRowFlagged(r)).map((row) => (
+                    <ReviewItemCard
+                      key={row.id}
+                      row={row}
+                      flagged
+                      expanded
+                      dupSku={rowHasDuplicateSku(row)}
+                      onChange={(patch) => updateRow(row.id, patch)}
+                      onToggleExcluded={(included) => updateRow(row.id, { excluded: !included })}
+                      t={t}
+                    />
+                  ))}
+                </div>
+              )}
+
+              {readyCount > 0 && (
+                <div className="bulkreview__section">
+                  {!showAllReady ? (
+                    <button type="button" className="bulkreview__show-all-btn" onClick={() => setShowAllReady(true)}>
+                      {t("owner.bulkImport.showAllReady", readyCount)} <ChevronDown size={15} />
+                    </button>
+                  ) : (
+                    <>
+                      <div className="bulkreview__section-header">{t("owner.bulkImport.looksGood")}</div>
+                      {reviewRows.filter((r) => !isRowFlagged(r)).map((row) => (
+                        <ReviewItemCard
+                          key={row.id}
+                          row={row}
+                          flagged={false}
+                          expanded={expandedIds.has(row.id)}
+                          dupSku={rowHasDuplicateSku(row)}
+                          onToggleExpand={() => toggleExpanded(row.id)}
+                          onChange={(patch) => updateRow(row.id, patch)}
+                          onToggleExcluded={(included) => updateRow(row.id, { excluded: !included })}
+                          t={t}
+                        />
+                      ))}
+                    </>
+                  )}
+                </div>
+              )}
 
               {duplicateSkus.size > 0 && (
                 <p className="pform__error" style={{ marginTop: 12 }}>
@@ -587,7 +809,7 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
           )}
           {step === "review" && (
             <>
-              <button type="button" className="regform__nav-back" onClick={() => setStep("mapping")}>
+              <button type="button" className="regform__nav-back" onClick={() => setStep(source === "receipt" ? "choose" : "mapping")}>
                 <ArrowLeft size={16} /> {t("owner.bulkImport.back")}
               </button>
               <button
@@ -617,3 +839,5 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
     </AnimatePresence>
   );
 }
+
+

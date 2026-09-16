@@ -134,11 +134,22 @@ const slideVariants = {
 // Inner Leaflet helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Listens for map clicks and updates the pin position */
-function ClickHandler({ onMapClick }) {
-  useMapEvents({
-    click(e) {
-      onMapClick(e.latlng.lat, e.latlng.lng);
+/**
+ * CenterTracker
+ * The engine behind the "move the map, pin stays put" pattern: the pin
+ * is a plain CSS element fixed at the exact center of the screen (see
+ * the JSX below), never a Leaflet layer — so it can never be dragged,
+ * mis-tapped, or fat-fingered off target. Panning the MAP is what
+ * changes the location; this component just reads back wherever the map
+ * ended up centered once the user stops moving it (`moveend`, not
+ * `move`, so we're not writing state on every pixel of a drag) and
+ * reports that single point up as the pin's real coordinate.
+ */
+function CenterTracker({ onCenterChange }) {
+  const map = useMapEvents({
+    moveend() {
+      const c = map.getCenter();
+      onCenterChange(c.lat, c.lng);
     },
   });
   return null;
@@ -239,64 +250,84 @@ function StepStoreDetails({ data, onChange, errors, t }) {
   );
 }
 
-/** Step 2 — GIS location: auto-pinned from GPS on entry, with Nominatim
- *  geocoding + a draggable pin available as fallback/fine-tuning. */
+/**
+ * Step 2 — Location.
+ *
+ * Flow, in plain terms:
+ *   1. Grab GPS automatically the moment this step opens (no button to
+ *      tap first — one less thing to figure out).
+ *   2. Show a small, non-interactive preview and ask a single yes/no
+ *      question: "Is this your store?" Most people just tap Yes and
+ *      move on — no map-editing skills required at all for the common
+ *      case.
+ *   3. If No (or GPS fails/is denied), drop into "adjust" mode: a full
+ *      map they can pan freely, with the pin FIXED in the center of the
+ *      screen at all times. Moving the map is moving the pin — there's
+ *      nothing small to drag, nothing to miss with a fingertip. Typing
+ *      a street/subdivision is offered as a secondary way to jump the
+ *      map to roughly the right area, for when the GPS spot is far off.
+ *   4. Either path ends in the same "Location set" state, with a small
+ *      "Change" link in case they want to redo it.
+ *
+ * `data.confirmed` (not just data.lat/lng existing) is what gates moving
+ * to Step 3 — coordinates alone don't mean the owner actually looked at
+ * and accepted a location, only that GPS resolved to *something*.
+ */
 function StepGISLocation({ data, onChange, errors, t, theme }) {
   const [searchQuery, setSearchQuery] = useState(data.address || "");
   const [geocoding, setGeocoding] = useState(false);
   const [geocodeError, setGeocodeError] = useState("");
   const [flyTarget, setFlyTarget] = useState(null);
+  const [manualMode, setManualMode] = useState(false);
 
   const hasCoords = data.lat !== null && data.lng !== null;
 
-  // Automated GPS pinning: request the browser's location the moment
-  // this step is shown, and — if the merchant hasn't already placed a
-  // pin some other way — drop the marker straight on their GPS
-  // coordinates and fly the map there. useGeolocation() already
-  // auto-requests on its own mount, so mounting it here (rather than
-  // higher up the tree) is what makes it fire exactly when Step 2
-  // becomes visible, not before.
   const { position: gpsPosition, status: gpsStatus, requestLocation: retryGps } = useGeolocation();
-  const hasAutoPinnedRef = useRef(false);
 
+  // Applies a resolved GPS fix to the pin — covers both the initial
+  // auto-pin on step entry AND a later "try again" tap from inside
+  // manual mode (e.g. GPS timed out indoors the first time but succeeds
+  // on retry near a window). Never overrides a location the owner has
+  // already explicitly confirmed. Dedupes on the exact fix so it only
+  // ever applies (and flies the map to) each new GPS result once.
+  const lastAppliedGpsRef = useRef(null);
   useEffect(() => {
-    if (hasAutoPinnedRef.current) return;
-    if (hasCoords) {
-      // Merchant (or a previous visit to this step) already set a pin —
-      // don't clobber it with GPS once it resolves.
-      hasAutoPinnedRef.current = true;
-      return;
-    }
-    if (gpsStatus === "granted" && gpsPosition) {
-      hasAutoPinnedRef.current = true;
-      onChange("lat", gpsPosition[0]);
-      onChange("lng", gpsPosition[1]);
-      setFlyTarget(gpsPosition);
-    }
-  }, [gpsStatus, gpsPosition, hasCoords, onChange]);
+    if (data.confirmed) return;
+    if (gpsStatus !== "granted" || !gpsPosition) return;
+    const key = `${gpsPosition[0]},${gpsPosition[1]}`;
+    if (lastAppliedGpsRef.current === key) return;
+    lastAppliedGpsRef.current = key;
+    onChange("lat", gpsPosition[0]);
+    onChange("lng", gpsPosition[1]);
+    if (manualMode) setFlyTarget(gpsPosition);
+  }, [gpsStatus, gpsPosition, data.confirmed, manualMode, onChange]);
 
-  /** Nominatim address → coordinates */
+  // If GPS can't help at all, skip straight to manual adjustment —
+  // there's nothing to "confirm" without a detected position.
+  useEffect(() => {
+    if (!data.confirmed && !manualMode && (gpsStatus === "denied" || gpsStatus === "unsupported")) {
+      setManualMode(true);
+    }
+  }, [gpsStatus, data.confirmed, manualMode]);
+
+  /** Nominatim address → coordinates (secondary path, used from adjust mode) */
   const handleGeocode = useCallback(async () => {
     if (!searchQuery.trim()) return;
     setGeocoding(true);
     setGeocodeError("");
-
     try {
       const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery)}&limit=1&countrycodes=ph`;
       const res = await fetch(url, {
         headers: { "Accept-Language": "en", "User-Agent": "GIS-Community-Platform/1.0" },
       });
       const results = await res.json();
-
       if (results.length === 0) {
         setGeocodeError(t("owner.registration.addressNotFound"));
         return;
       }
-
       const { lat, lon } = results[0];
       const newLat = parseFloat(lat);
       const newLng = parseFloat(lon);
-
       onChange("lat", newLat);
       onChange("lng", newLng);
       onChange("address", searchQuery.trim());
@@ -308,172 +339,185 @@ function StepGISLocation({ data, onChange, errors, t, theme }) {
     }
   }, [searchQuery, onChange, t]);
 
-  const handleMapClick = useCallback((lat, lng) => {
+  const handleCenterChange = useCallback((lat, lng) => {
     onChange("lat", lat);
     onChange("lng", lng);
   }, [onChange]);
 
-  const handleMarkerDrag = useCallback((e) => {
-    const { lat, lng } = e.target.getLatLng();
-    onChange("lat", lat);
-    onChange("lng", lng);
-  }, [onChange]);
+  const acceptLocation = () => onChange("confirmed", true);
+  const startAdjusting = () => { onChange("confirmed", false); setManualMode(true); };
 
-  return (
-    <div className="regform__step">
-      <p className="regform__step-desc">
-        {t("owner.registration.stepLocationDesc")}
-      </p>
-
-      {/* Reassurance banner — the pin doesn't need to be pixel-perfect */}
-      <div className="regform__banner" role="note" style={{
-        display: "flex", alignItems: "flex-start", gap: 8,
-        padding: "10px 14px", borderRadius: "var(--radius-md, 8px)",
-        marginBottom: 14, fontSize: 12.5, lineHeight: 1.5,
-        background: "var(--color-surface-3)", color: "var(--color-text-secondary)",
-      }}>
-        <MapPin size={16} style={{ flexShrink: 0, marginTop: 1, color: "var(--color-brand-primary)" }} />
-        <span>{t("owner.registration.locationBanner")}</span>
-      </div>
-
-      {/* GPS auto-pin status — auto-fires on step entry; search/tap/drag
-          below all remain available to fine-tune or override it */}
-      {!hasCoords && gpsStatus === "loading" && (
-        <div className="regform__field-hint" style={{
-          display: "flex", alignItems: "center", gap: 8, fontSize: 13,
-          color: "var(--color-text-muted)", marginBottom: 10,
-        }}>
-          <Loader2 size={14} className="regform__spin" /> {t("owner.registration.locatingGps")}
-        </div>
-      )}
-      {!hasCoords && (gpsStatus === "denied" || gpsStatus === "unsupported") && (
-        <div className="regform__field-hint" style={{
-          display: "flex", alignItems: "center", gap: 8, fontSize: 13,
-          color: "var(--color-low)", marginBottom: 10,
-        }}>
-          <AlertTriangle size={14} />
-          <span>{t("owner.registration.gpsUnavailable")}</span>
-          {gpsStatus === "denied" && (
-            <button
-              type="button"
-              onClick={retryGps}
-              style={{
-                display: "inline-flex", alignItems: "center", gap: 4,
-                background: "none", border: "none", color: "var(--color-brand-primary)",
-                fontWeight: 700, cursor: "pointer", padding: 0, fontSize: 13,
-              }}
-            >
-              <LocateFixed size={13} /> {t("owner.registration.tryGpsAgain")}
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* Address search + geocode (fallback / fine-tune — GPS already
-          placed the pin above in the common case) */}
-      <div className="regform__field">
-        <label className="regform__label" htmlFor="reg-address">
-          {t("owner.registration.addressLabel")}
-        </label>
-        <div className="regform__geocode-row">
-          <input
-            id="reg-address"
-            className="pform__input"
-            style={{ flex: 1 }}
-            type="text"
-            placeholder={t("owner.registration.addressPlaceholder")}
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleGeocode()}
-          />
-          <button
-            type="button"
-            className="regform__geocode-btn"
-            onClick={handleGeocode}
-            disabled={geocoding || !searchQuery.trim()}
-            aria-label={t("search.label")}
-          >
-            {geocoding
-              ? <Loader2 size={18} className="regform__spin" />
-              : <Search size={18} />}
+  // ── State: already confirmed — small success card, nothing to read ──────────
+  if (data.confirmed && hasCoords) {
+    return (
+      <div className="regform__step">
+        <div className="regform__location-card regform__location-card--done">
+          <CheckCircle2 size={32} color="var(--color-available)" />
+          <p className="regform__location-card-title">{t("owner.registration.locationSetTitle")}</p>
+          <button type="button" className="regform__location-change-link" onClick={startAdjusting}>
+            {t("owner.registration.changeLocation")}
           </button>
         </div>
-        {geocodeError && (
-          <span className="regform__field-error">
-            <AlertTriangle size={12} /> {geocodeError}
-          </span>
-        )}
-        {errors.coords && (
-          <span className="regform__field-error">
-            <AlertTriangle size={12} /> {errors.coords}
-          </span>
-        )}
       </div>
+    );
+  }
 
-      {/* Leaflet map */}
-      <div className="regform__map-wrapper">
-        <div className="regform__map-hint">
-          {hasCoords
-            ? `📍 ${data.lat.toFixed(6)}, ${data.lng.toFixed(6)}`
-            : t("owner.registration.tapToPlace")}
+  // ── State: manual adjustment — pannable map, pin fixed at center ────────────
+  if (manualMode) {
+    const center = hasCoords ? [data.lat, data.lng] : CATALUNAN_GRANDE_CENTER;
+    return (
+      <div className="regform__step">
+        <p className="regform__step-desc">{t("owner.registration.adjustTitle")}</p>
+
+        <div className="regform__map-wrapper" style={{ position: "relative" }}>
+          <MapContainer
+            center={center}
+            zoom={DEFAULT_ZOOM}
+            style={{ height: "280px", width: "100%", borderRadius: "12px" }}
+            preferCanvas
+            zoomControl
+            attributionControl={false}
+          >
+            <TileLayer key={theme} url={getTileUrl(theme)} attribution="" subdomains="abcd" maxZoom={20} />
+            <CenterTracker onCenterChange={handleCenterChange} />
+            <FlyController target={flyTarget} />
+            <ForceMapHeight height="280px" />
+          </MapContainer>
+
+          {/* The pin — plain CSS, fixed dead-center, never moves. Moving
+              the MAP under it is the entire interaction. */}
+          <div
+            aria-hidden="true"
+            style={{
+              position: "absolute", top: "50%", left: "50%",
+              transform: "translate(-50%, -100%)",
+              pointerEvents: "none", zIndex: 500,
+              filter: "drop-shadow(0 2px 3px rgba(0,0,0,0.35))",
+            }}
+            dangerouslySetInnerHTML={{
+              __html: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="40" height="40">
+                <path fill="#C85A27" stroke="#fff" stroke-width="1.2"
+                  d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/>
+                <circle cx="12" cy="9" r="2.8" fill="white"/>
+              </svg>`,
+            }}
+          />
+
+          <div className="regform__map-hint" style={{ position: "absolute", top: 8, left: "50%", transform: "translateX(-50%)", zIndex: 500 }}>
+            {t("owner.registration.adjustHint")}
+          </div>
         </div>
 
-        <MapContainer
-          center={
-            hasCoords ? [data.lat, data.lng] : CATALUNAN_GRANDE_CENTER
-          }
-          zoom={DEFAULT_ZOOM}
-          style={{ height: "280px", width: "100%", borderRadius: "0 0 12px 12px" }}
-          preferCanvas
-          zoomControl
-          attributionControl={false}
-        >
-          <TileLayer
-            key={theme}
-            url={getTileUrl(theme)}
-            attribution=""
-            subdomains="abcd"
-            maxZoom={20}
-          />
-          <ClickHandler onMapClick={handleMapClick} />
-          <FlyController target={flyTarget} />
-          <ForceMapHeight height="280px" />
+        {gpsStatus === "denied" && (
+          <button
+            type="button"
+            onClick={retryGps}
+            style={{
+              display: "flex", alignItems: "center", gap: 6, margin: "10px auto 0",
+              background: "none", border: "none", color: "var(--color-brand-primary)",
+              fontWeight: 700, cursor: "pointer", padding: 4, fontSize: 13,
+            }}
+          >
+            <LocateFixed size={14} /> {t("owner.registration.tryGpsAgain")}
+          </button>
+        )}
 
-          {hasCoords && (
-            <Marker
-              position={[data.lat, data.lng]}
-              icon={STORE_PIN_ICON}
-              draggable
-              eventHandlers={{ dragend: handleMarkerDrag }}
+        {/* Secondary path — only needed if the map is showing the wrong
+            neighborhood entirely */}
+        <div className="regform__field" style={{ marginTop: 12 }}>
+          <label className="regform__label" htmlFor="reg-address">
+            {t("owner.registration.orSearchAddress")}
+          </label>
+          <div className="regform__geocode-row">
+            <input
+              id="reg-address"
+              className="pform__input"
+              style={{ flex: 1 }}
+              type="text"
+              placeholder={t("owner.registration.addressPlaceholder")}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleGeocode()}
             />
+            <button type="button" className="regform__geocode-btn" onClick={handleGeocode}
+              disabled={geocoding || !searchQuery.trim()} aria-label={t("search.label")}>
+              {geocoding ? <Loader2 size={18} className="regform__spin" /> : <Search size={18} />}
+            </button>
+          </div>
+          {geocodeError && (
+            <span className="regform__field-error"><AlertTriangle size={12} /> {geocodeError}</span>
           )}
+          {errors.coords && (
+            <span className="regform__field-error"><AlertTriangle size={12} /> {errors.coords}</span>
+          )}
+        </div>
+
+        <button type="button" className="regform__nav-next" style={{ width: "100%", marginTop: 16 }}
+          onClick={acceptLocation} disabled={!hasCoords}>
+          <CheckCircle2 size={18} /> {t("owner.registration.adjustConfirm")}
+        </button>
+      </div>
+    );
+  }
+
+  // ── State: waiting on GPS ────────────────────────────────────────────────────
+  if (gpsStatus === "loading" || !hasCoords) {
+    return (
+      <div className="regform__step">
+        <div className="regform__location-card">
+          <Loader2 size={32} className="regform__spin" color="var(--color-brand-primary)" />
+          <p className="regform__location-card-title">{t("owner.registration.locatingGps")}</p>
+        </div>
+        {errors.coords && (
+          <span className="regform__field-error"><AlertTriangle size={12} /> {errors.coords}</span>
+        )}
+      </div>
+    );
+  }
+
+  // ── State: confirm — small static preview + Yes/No ──────────────────────────
+  return (
+    <div className="regform__step">
+      <p className="regform__step-desc">{t("owner.registration.confirmTitle")}</p>
+
+      <div className="regform__map-wrapper">
+        <MapContainer
+          center={[data.lat, data.lng]}
+          zoom={17}
+          style={{ height: "180px", width: "100%", borderRadius: "12px" }}
+          zoomControl={false}
+          attributionControl={false}
+          dragging={false}
+          scrollWheelZoom={false}
+          doubleClickZoom={false}
+          touchZoom={false}
+          boxZoom={false}
+          keyboard={false}
+        >
+          <TileLayer key={theme} url={getTileUrl(theme)} subdomains="abcd" maxZoom={20} />
+          <ForceMapHeight height="180px" />
+          <Marker position={[data.lat, data.lng]} icon={STORE_PIN_ICON} />
         </MapContainer>
       </div>
 
-      {/* Manual coordinate display / nudge */}
-      {hasCoords && (
-        <div className="regform__coord-row">
-          <div className="regform__coord-field">
-            <label className="regform__label">{t("owner.registration.latitude")}</label>
-            <input
-              className="pform__input"
-              type="number"
-              step="0.000001"
-              value={data.lat}
-              onChange={(e) => onChange("lat", parseFloat(e.target.value))}
-            />
-          </div>
-          <div className="regform__coord-field">
-            <label className="regform__label">{t("owner.registration.longitude")}</label>
-            <input
-              className="pform__input"
-              type="number"
-              step="0.000001"
-              value={data.lng}
-              onChange={(e) => onChange("lng", parseFloat(e.target.value))}
-            />
-          </div>
-        </div>
+      <p className="regform__step-desc" style={{ fontSize: 12.5, marginTop: 8 }}>
+        {t("owner.registration.confirmHint")}
+      </p>
+
+      <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+        <button type="button" className="regform__nav-back" style={{ flex: 1, justifyContent: "center" }}
+          onClick={startAdjusting}>
+          {t("owner.registration.confirmNo")}
+        </button>
+        <button type="button" className="regform__nav-next" style={{ flex: 1, justifyContent: "center" }}
+          onClick={acceptLocation}>
+          <CheckCircle2 size={18} /> {t("owner.registration.confirmYes")}
+        </button>
+      </div>
+      {errors.coords && (
+        <span className="regform__field-error" style={{ display: "block", marginTop: 8 }}>
+          <AlertTriangle size={12} /> {errors.coords}
+        </span>
       )}
     </div>
   );
@@ -488,7 +532,6 @@ function StepReview({ data, t, theme }) {
     { label: t("owner.registration.reviewStoreType"), value: data.type },
     { label: t("owner.registration.reviewContact"), value: data.contactNumber },
     { label: t("owner.registration.reviewAddress"), value: data.address || t("owner.registration.reviewNotProvided") },
-    { label: t("owner.registration.reviewCoordinates"), value: hasCoords ? `${data.lat.toFixed(6)}, ${data.lng.toFixed(6)}` : t("owner.registration.reviewNotSet") },
   ];
 
   return (
@@ -547,6 +590,10 @@ const INITIAL_DATA = {
   address: "",
   lat: null,
   lng: null,
+  // Gates Step 2 -> Step 3, not just lat/lng existing — GPS resolving to
+  // *something* isn't the same as the owner having looked at it and
+  // said "yes, that's right". See StepGISLocation's file header.
+  confirmed: false,
 };
 
 /**
@@ -603,7 +650,7 @@ export default function StoreRegistrationForm({ user, onComplete, onCancel }) {
       if (!data.contactNumber.trim()) errs.contactNumber = t("owner.registration.contactRequired");
     }
     if (targetStep >= 2) {
-      if (data.lat === null || data.lng === null)
+      if (!data.confirmed || data.lat === null || data.lng === null)
         errs.coords = t("owner.registration.coordsRequired");
     }
     return errs;

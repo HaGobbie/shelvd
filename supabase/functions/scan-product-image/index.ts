@@ -1,54 +1,39 @@
-// supabase/functions/scan-product-image/index.ts
+// supabase/functions/scan-receipt-image/index.ts
 //
-// "AI Snap & Fill" backend for ProductFormModal.jsx. Takes a resized,
-// base64-encoded product/service photo from the owner's camera and
-// returns a structured {name, category, unit, estimated_price,
-// is_service} guess from Gemini.
+// Backend for BulkImportModal.jsx's "Scan a Receipt" path. Takes a
+// resized, base64-encoded photo of a wholesaler receipt/invoice and
+// returns an ARRAY of line items — the multi-item sibling of
+// scan-product-image (which returns one product from one package photo).
+// Kept as a separate function rather than a mode flag on that one:
+// the prompt, response schema (array vs single object), and the whole
+// idea of what "confidence" means are different enough that bolting
+// this onto scan-product-image would make one function do two
+// unrelated jobs. Shares its security model exactly: GEMINI_API_KEY is
+// an Edge Function secret only, JWT verification stays on by default
+// (do NOT deploy with --no-verify-jwt), same two-model fallback.
 //
-// WHY THIS EXISTS AS A SERVER FUNCTION AND NOT A DIRECT CLIENT CALL:
-// Shelvd is a static Vite build deployed to GitHub Pages — there is no
-// server to hide a secret in on the client side. Any `VITE_*` env var
-// gets inlined into the shipped JS bundle at build time, so a Gemini key
-// used directly from src/services/geminiScanner.js would be plainly
-// readable by anyone who opens dev tools. This function is the fix:
-// GEMINI_API_KEY lives ONLY as a Supabase Edge Function secret (set via
-// `supabase secrets set`, see deployment notes below) and never appears
-// in any file the browser downloads. The client calls this function by
-// name via supabase.functions.invoke(...); the real key never leaves
-// Supabase's infrastructure.
-//
-// AUTH (not rate limiting): Supabase Edge Functions verify the caller's
-// JWT by default — this function does NOT set `--no-verify-jwt` on
-// deploy, so only requests carrying a valid Supabase Auth session
-// (i.e. a signed-in store owner, which is the only context
-// ProductFormModal ever renders in) can reach this code at all. That's
-// authentication, not throttling — per your instruction, there is
-// deliberately no per-store or per-day request cap here. If you ever
-// want that later, this is the file to add it to (e.g. counting rows in
-// a new `scan_events` table per store_id), but nothing like that exists
-// today.
-//
-// MODEL FALLBACK: tries gemini-3.5-flash-lite first; on a 429 (rate
-// limited), retries once against gemini-3.1-flash-lite. Both are real,
-// current Gemini models (verified against Google's docs as of Sept
-// 2026) from two different generations, so they draw from separate
-// quota pools — a genuine fallback, not just cosmetic.
+// WHY THIS IS HARDER THAN scan-product-image, AND WHY THAT'S OKAY:
+// A single product photo shows clean, well-lit packaging design. A
+// receipt is much messier — faded thermal print, heavy abbreviation
+// ("CORNBF 150G"), and a qty/unit-price/total-price layout the model
+// has to correctly disentangle per line. Expect a meaningfully higher
+// error rate than the single-product scanner. That's why every item
+// here carries a `low_confidence` flag: BulkImportModal turns that into
+// a normal validation error, which means an uncertain line just lands
+// in the SAME flagged-first review cards as a bad CSV row — the review
+// UI is the safety net, not a perfect extraction.
 //
 // DEPLOYMENT (one-time):
-//   1. supabase functions deploy scan-product-image
-//      (default JWT verification stays ON — do NOT pass --no-verify-jwt)
-//   2. supabase secrets set GEMINI_API_KEY=your-key-here
-//   3. Lock the CORS origin below down to your actual GitHub Pages URL
-//      once you know it (see ALLOWED_ORIGIN).
+//   1. supabase functions deploy scan-receipt-image
+//      (default JWT verification stays ON)
+//   2. GEMINI_API_KEY is shared with scan-product-image — if that
+//      secret is already set, nothing more to do:
+//        supabase secrets set GEMINI_API_KEY=your-key-here
+//   3. Lock ALLOWED_ORIGIN down to your real GitHub Pages URL once known
+//      (same note as scan-product-image).
 
 // deno-lint-ignore-file no-explicit-any
 
-// ── CORS ────────────────────────────────────────────────────────────────────
-// Tighten this to your real deployed origin, e.g.
-// "https://your-username.github.io", once you know it. "*" works for
-// testing but allows any website to call this function (though it still
-// can't do anything useful without a valid Supabase session — see the
-// AUTH note above).
 const ALLOWED_ORIGIN = "*";
 
 const CORS_HEADERS: Record<string, string> = {
@@ -64,15 +49,12 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-// ── Gemini config ────────────────────────────────────────────────────────────
 const PRIMARY_MODEL = "gemini-3.5-flash-lite";
 const FALLBACK_MODEL = "gemini-3.1-flash-lite";
 
-// Keep this list in sync with CATEGORIES / SERVICE_CATEGORIES in
-// src/components/ProductFormModal.jsx. The client re-validates whatever
-// Gemini returns against its own copy of this list regardless (never
-// trusts this blindly), but keeping the model's enum aligned means fewer
-// results fall back to "Other" in the first place.
+// Keep in sync with CATEGORIES in src/constants/productCategories.js.
+// The client re-validates against its own copy regardless (never trusts
+// this blindly) — see normalizeCategory() in geminiScanner.js.
 const CATEGORY_ENUM = [
   "Pantry", "Grains", "Canned Goods", "Beverages", "Condiments",
   "Dairy & Eggs", "Household", "Personal Care", "Snacks", "Frozen Goods",
@@ -80,29 +62,46 @@ const CATEGORY_ENUM = [
 ];
 
 const SYSTEM_PROMPT =
-  "You are an accurate retail image scanner for neighborhood micro-merchants " +
-  "in the Philippines. Analyze the provided product or service packaging " +
-  "image. Extract a clean, short product title (as it would appear on a " +
-  "price tag, not the full marketing text on the package), map it to the " +
-  "single closest allowed category, determine the most natural selling " +
-  "unit, and estimate the price ONLY if a price is clearly printed/visible " +
-  "on the packaging or a shelf tag in the image — otherwise return null for " +
-  "price rather than guessing. Set is_service to true only for Water " +
-  "Refill, LPG / Cooking Gas, Ice, or E-Load. If the image is unclear, " +
-  "blurry, or doesn't show a retail product/service, still return your " +
-  "best-guess JSON rather than refusing, using \"Other\" as the category " +
-  "if nothing else fits.";
+  "You are reading a wholesaler or grocery receipt photo for a Philippine " +
+  "neighborhood micro-merchant restocking their store. Extract every " +
+  "PURCHASED LINE ITEM as a separate entry. Do NOT include the store's " +
+  "name/address/header, the subtotal, tax (VAT), discount, total amount " +
+  "due, cash tendered, change, or any payment/loyalty-program text — " +
+  "those are not products. For each genuine line item: " +
+  "(1) name — clean up spacing/capitalization only; do not guess an " +
+  "expansion of an abbreviation unless you are confident (e.g. leave " +
+  "\"CORNBF 150G\" mostly as-is rather than inventing a full product name " +
+  "you are not sure of). " +
+  "(2) category — the single closest match from the allowed list. " +
+  "(3) unit — the most natural selling unit for this item (piece, pack, " +
+  "kg, bottle, etc). " +
+  "(4) quantity — the number of units purchased on that line. " +
+  "(5) unit_price — the price PER UNIT, not the line total. Many receipts " +
+  "print quantity, unit price, AND a line total together — if only a line " +
+  "total is printed alongside quantity, compute unit_price = total / " +
+  "quantity yourself rather than returning the total. If you cannot " +
+  "confidently determine a price at all, return null rather than " +
+  "guessing. " +
+  "(6) low_confidence — set true if ANY of the name, quantity, or price " +
+  "for this specific line is unclear, blurry, cut off, or ambiguous — be " +
+  "honest and generous about flagging uncertainty here, since a human " +
+  "will review every flagged line before anything is saved. " +
+  "Return an empty array if the image does not look like a receipt at all.";
 
 const RESPONSE_SCHEMA = {
-  type: "OBJECT",
-  properties: {
-    name: { type: "STRING" },
-    category: { type: "STRING", enum: CATEGORY_ENUM },
-    unit: { type: "STRING" },
-    estimated_price: { type: "NUMBER", nullable: true },
-    is_service: { type: "BOOLEAN" },
+  type: "ARRAY",
+  items: {
+    type: "OBJECT",
+    properties: {
+      name: { type: "STRING" },
+      category: { type: "STRING", enum: CATEGORY_ENUM },
+      unit: { type: "STRING" },
+      quantity: { type: "NUMBER" },
+      unit_price: { type: "NUMBER", nullable: true },
+      low_confidence: { type: "BOOLEAN" },
+    },
+    required: ["name", "category", "unit", "quantity", "low_confidence"],
   },
-  required: ["name", "category", "unit", "is_service"],
 };
 
 async function callGemini(model: string, apiKey: string, base64Image: string, mimeType: string) {
@@ -119,7 +118,7 @@ async function callGemini(model: string, apiKey: string, base64Image: string, mi
         {
           role: "user",
           parts: [
-            { text: "Analyze this image and return the structured JSON described in your instructions." },
+            { text: "Extract every line item from this receipt as the structured JSON array described in your instructions." },
             { inlineData: { mimeType, data: base64Image } },
           ],
         },
@@ -143,7 +142,7 @@ Deno.serve(async (req: Request) => {
   const apiKey = Deno.env.get("GEMINI_API_KEY");
   if (!apiKey) {
     console.error("GEMINI_API_KEY is not set as an Edge Function secret.");
-    return jsonResponse({ error: "Image scanning isn't configured on the server yet." }, 500);
+    return jsonResponse({ error: "Receipt scanning isn't configured on the server yet." }, 500);
   }
 
   let body: any;
@@ -157,14 +156,11 @@ Deno.serve(async (req: Request) => {
   if (!image || typeof image !== "string") {
     return jsonResponse({ error: "Missing 'image' (base64 string, no data: prefix)." }, 400);
   }
-
-  // Sanity bound only — NOT rate limiting. The client resizes images to
-  // ~1024px before sending, so a legitimate request is well under a
-  // couple hundred KB of base64. This just guards against something
-  // absurd (e.g. a full-resolution photo bypassing the client resize)
-  // eating unnecessary Gemini input-token cost on one single call.
-  if (image.length > 8_000_000) {
-    return jsonResponse({ error: "Image is too large. Please try a smaller photo." }, 413);
+  // Sanity bound only, not rate limiting — a receipt is resized larger
+  // than a single-product photo client-side (more text to keep legible),
+  // so this ceiling is higher than scan-product-image's.
+  if (image.length > 12_000_000) {
+    return jsonResponse({ error: "Image is too large. Please try a smaller or less detailed photo." }, 413);
   }
 
   const safeMimeType = typeof mimeType === "string" && mimeType.startsWith("image/")
@@ -185,7 +181,7 @@ Deno.serve(async (req: Request) => {
       const errText = await res.text();
       console.error(`Gemini API error via ${usedModel} (${res.status}):`, errText);
       return jsonResponse(
-        { error: "Image scan failed. Please try again or enter the details manually." },
+        { error: "Couldn't read that receipt. Please try again or add items manually." },
         502,
       );
     }
@@ -205,9 +201,14 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ error: "Scan returned an unreadable result. Please try again." }, 502);
     }
 
-    return jsonResponse({ result: parsed, model: usedModel });
+    if (!Array.isArray(parsed)) {
+      console.error(`Gemini response via ${usedModel} was not an array:`, textPart);
+      return jsonResponse({ error: "Scan returned an unexpected result. Please try again." }, 502);
+    }
+
+    return jsonResponse({ items: parsed, model: usedModel });
   } catch (err) {
-    console.error("scan-product-image unexpected failure:", err);
-    return jsonResponse({ error: "Unexpected error while scanning the image." }, 500);
+    console.error("scan-receipt-image unexpected failure:", err);
+    return jsonResponse({ error: "Unexpected error while scanning the receipt." }, 500);
   }
 });

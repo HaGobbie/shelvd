@@ -153,6 +153,22 @@ export default function OnboardingTour({ isOpen, onClose, steps, storageKey, lab
     onClose();
   }, [onClose, storageKey]);
 
+  // Deliberately separate from `finish()`. Every OTHER dismiss path here
+  // (the labeled Skip button, the round X button, reaching the end and
+  // tapping Done) is an explicit, visible action someone chose on
+  // purpose — those should permanently mark the tour seen. A tap on the
+  // dark backdrop is a much easier thing to do BY ACCIDENT (reaching for
+  // something behind the tooltip, a thumb grazing the edge of the
+  // screen) and previously triggered the exact same permanent dismissal.
+  // For someone already unsure about the app, one mis-tap silently
+  // losing the rest of onboarding — with no visible sign that a "show me
+  // again" option (the header's help icon) even exists yet — is a real
+  // cost for a very cheap accident. This just closes for now; the tour
+  // will show again next time the trigger condition is met.
+  const softClose = useCallback(() => {
+    onClose();
+  }, [onClose]);
+
   const goNext = () => {
     if (stepIndex >= steps.length - 1) {
       finish();
@@ -243,7 +259,7 @@ export default function OnboardingTour({ isOpen, onClose, steps, storageKey, lab
         initial="hidden"
         animate="visible"
         exit="exit"
-        onClick={finish}
+        onClick={softClose}
         style={{
           position: "fixed",
           inset: 0,
@@ -353,3 +369,5 @@ export default function OnboardingTour({ isOpen, onClose, steps, storageKey, lab
     </AnimatePresence>
   );
 }
+
+

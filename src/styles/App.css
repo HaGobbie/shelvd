@@ -1811,6 +1811,43 @@ html[data-theme="dark"] .pform__select {
   color: var(--color-text-secondary);
 }
 
+/* "Finding you..." / "Location set!" cards — Step 2's confirm-first flow */
+.regform__location-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-6) var(--space-4);
+  border: 1.5px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  text-align: center;
+  min-height: 180px;
+}
+
+.regform__location-card--done {
+  border-color: var(--color-available);
+  background: var(--color-available-bg);
+}
+
+.regform__location-card-title {
+  font-size: var(--text-md);
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.regform__location-change-link {
+  background: none;
+  border: none;
+  color: var(--color-brand-primary);
+  font-weight: 700;
+  font-size: var(--text-sm);
+  cursor: pointer;
+  padding: var(--space-2);
+}
+
 /* Manual lat/lng coordinate inputs */
 .regform__coord-row {
   display: flex;
@@ -2029,6 +2066,180 @@ html[data-theme="dark"] .pform__select {
     padding: 0;
     justify-content: center;
   }
+}
+
+/* ─── Bulk import review: flagged-first cards + collapsed "looks good" list ── */
+
+.bulkreview__summary {
+  font-weight: 700;
+  font-size: 14px;
+  margin: 0 0 var(--space-4, 16px);
+}
+
+.bulkreview__section {
+  margin-bottom: var(--space-4, 16px);
+}
+
+.bulkreview__section-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+
+.bulkreview__skip-all-link {
+  margin-left: auto;
+  background: none;
+  border: none;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 4px;
+}
+
+.bulkreview__show-all-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 44px;
+  border: 1.5px dashed var(--color-border);
+  border-radius: var(--radius-md, 10px);
+  background: none;
+  color: var(--color-text-secondary);
+  font-weight: 700;
+  font-size: 13.5px;
+  cursor: pointer;
+}
+
+/* Compact one-line row — a "looks good" item before it's tapped open */
+.bulkreview__row-compact {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--color-border-light, #eee);
+  cursor: pointer;
+}
+
+.bulkreview__row-compact-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.bulkreview__row-compact-name {
+  font-weight: 600;
+  font-size: 13.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bulkreview__row-compact-meta {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Expanded, editable card — always used for flagged items, used for a
+   "looks good" item once tapped open */
+.bulkreview__card {
+  border: 1.5px solid var(--color-border);
+  border-radius: var(--radius-md, 10px);
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  background: var(--color-surface);
+}
+
+.bulkreview__card--flagged {
+  border-color: var(--color-out);
+  background: var(--color-out-bg);
+}
+
+.bulkreview__card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.bulkreview__flag-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--color-out);
+}
+
+.bulkreview__collapse-link {
+  background: none;
+  border: none;
+  color: var(--color-brand-primary);
+  font-weight: 700;
+  font-size: 12.5px;
+  cursor: pointer;
+  padding: 4px;
+}
+
+.bulkreview__error-line {
+  font-size: 12.5px;
+  color: var(--color-out);
+  margin: 0 0 8px;
+}
+
+/* ─── Bulk import: choose-path entry cards (Scan a Receipt / Upload a Spreadsheet) ── */
+
+.bulkchoose__option {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-height: 76px;
+  padding: 16px;
+  margin-bottom: 12px;
+  border: 1.5px solid var(--color-border);
+  border-radius: var(--radius-md, 12px);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.bulkchoose__option:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.bulkchoose__option:not(:disabled):hover {
+  border-color: var(--color-brand-primary);
+  background: var(--color-surface-2);
+}
+
+.bulkchoose__option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.bulkchoose__option-title {
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.bulkchoose__option-desc {
+  font-size: 12.5px;
+  color: var(--color-text-muted);
 }
 
 
