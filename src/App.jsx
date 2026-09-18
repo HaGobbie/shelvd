@@ -466,6 +466,7 @@ function AppShell() {
       >
         <button
           type="button"
+          data-tour-id="map-lang-toggle"
           onClick={() => setLanguage(language === "en" ? "tl" : "en")}
           aria-label={t("common.language")}
           title={t("common.language")}

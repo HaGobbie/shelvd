@@ -464,18 +464,26 @@ export async function searchInventory(term) {
  * 021_frictionless_registration_and_services.sql for exactly what this
  * does and doesn't measure (it's app-wide, not geofenced to "nearby").
  *
+ * Returns `null` (not 0) on an actual fetch/RPC error — this matters:
+ * a genuinely quiet week and "the store_demand_count() function/table
+ * doesn't exist yet because the SQL migration was never run" used to
+ * look identical in the UI (both showed 0), making this feature
+ * impossible to debug from the app alone. The caller renders these two
+ * cases with different, honest messages.
+ *
  * @param {string} storeId
  * @param {number} [days=7]
+ * @returns {Promise<number|null>}
  */
 export async function fetchNeighborhoodDemand(storeId, days = 7) {
-  if (!storeId) return 0;
+  if (!storeId) return null;
   const { data, error } = await supabase.rpc("store_demand_count", {
     p_store_id: storeId,
     p_days: days,
   });
   if (error) {
     console.error("fetchNeighborhoodDemand failed:", error);
-    return 0;
+    return null;
   }
   return data ?? 0;
 }

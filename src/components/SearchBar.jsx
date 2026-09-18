@@ -67,7 +67,7 @@ export default function SearchBar({
   const hasQuery = value.trim().length > 0;
 
   return (
-    <div className="searchbar-wrapper" role="search">
+    <div className="searchbar-wrapper" data-tour-id="map-search-bar" role="search">
       <div className="searchbar-container">
         {/* Search icon / loading spinner */}
         <span className="searchbar-icon" aria-hidden="true">
@@ -119,3 +119,5 @@ export default function SearchBar({
     </div>
   );
 }
+
+

@@ -369,8 +369,20 @@ function StepGISLocation({ data, onChange, errors, t, theme }) {
       <div className="regform__step">
         <p className="regform__step-desc">{t("owner.registration.adjustTitle")}</p>
 
+        {/* key props on both this map and the confirm-preview map above
+            are deliberate, not decorative: react-leaflet only applies
+            options like `dragging` when a Leaflet map instance is first
+            constructed — changing props afterward doesn't reconfigure an
+            already-running instance. Without distinct keys, transitioning
+            from the confirm preview (built with dragging={false}) into
+            this view risked React reusing that same underlying map
+            instance here, silently carrying its non-draggable state
+            along with it. Distinct keys force a genuinely fresh mount
+            every time, guaranteeing this map always gets Leaflet's real
+            default (draggable) behavior. */}
         <div className="regform__map-wrapper" style={{ position: "relative" }}>
           <MapContainer
+            key="gis-adjust-map"
             center={center}
             zoom={DEFAULT_ZOOM}
             style={{ height: "280px", width: "100%", borderRadius: "12px" }}
@@ -403,7 +415,7 @@ function StepGISLocation({ data, onChange, errors, t, theme }) {
             }}
           />
 
-          <div className="regform__map-hint" style={{ position: "absolute", top: 8, left: "50%", transform: "translateX(-50%)", zIndex: 500 }}>
+          <div className="regform__map-hint" style={{ position: "absolute", top: 8, left: "50%", transform: "translateX(-50%)", zIndex: 500, pointerEvents: "none" }}>
             {t("owner.registration.adjustHint")}
           </div>
         </div>
@@ -482,6 +494,7 @@ function StepGISLocation({ data, onChange, errors, t, theme }) {
 
       <div className="regform__map-wrapper">
         <MapContainer
+          key="gis-confirm-map"
           center={[data.lat, data.lng]}
           zoom={17}
           style={{ height: "180px", width: "100%", borderRadius: "12px" }}

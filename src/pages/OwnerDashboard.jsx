@@ -607,7 +607,9 @@ function NeighborhoodDemandCard({ storeId }) {
         <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--color-text-primary)", marginTop: 2 }}>
           {loading
             ? t("owner.dashboard.neighborhoodDemandLoading")
-            : count > 0
+            : count === null
+              ? t("owner.dashboard.neighborhoodDemandError")
+              : count > 0
               ? t("owner.dashboard.neighborhoodDemandCount", count)
               : t("owner.dashboard.neighborhoodDemandZero")}
         </div>
@@ -974,6 +976,7 @@ export default function OwnerDashboard({ session }) {
 
           <button
             type="button"
+            data-tour-id="lang-theme-toggle"
             onClick={() => setLanguage(language === "en" ? "tl" : "en")}
             aria-label={t("common.language")}
             title={t("common.language")}
@@ -1023,6 +1026,7 @@ export default function OwnerDashboard({ session }) {
           <div style={{ position: "relative", flexShrink: 0 }}>
             <button
               type="button"
+              data-tour-id="edit-store-btn"
               onClick={() => setHeaderMenuOpen((v) => !v)}
               aria-label={t("owner.dashboard.moreActionsAria")}
               aria-expanded={headerMenuOpen}
@@ -1078,7 +1082,6 @@ export default function OwnerDashboard({ session }) {
                   <button
                     type="button"
                     role="menuitem"
-                    data-tour-id="edit-store-btn"
                     onClick={() => { setHeaderMenuOpen(false); setStoreEditOpen(true); }}
                     style={{
                       display: "flex", alignItems: "center", gap: 10, height: 44, padding: "0 12px",
