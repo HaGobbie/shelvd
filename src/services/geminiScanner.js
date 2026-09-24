@@ -206,6 +206,8 @@ async function extractFunctionErrorMessage(error, fallback) {
   }
   return error?.message || fallback;
 }
+/**
+ * scanProductImage
  * @param {File} file — an image File straight from an <input type="file"
  *   accept="image/*" capture="environment"> element.
  * @returns {Promise<{name, category, customCategory, unit, estimatedPrice, isService}>}
