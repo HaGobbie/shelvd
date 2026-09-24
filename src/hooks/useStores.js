@@ -426,7 +426,7 @@ export async function searchInventory(term) {
     console.error("searchInventory failed:", error);
     return [];
   }
-  const results = (data ?? []).map((row) => ({
+  return (data ?? []).map((row) => ({
     storeId: row.store_id,
     storeName: row.store_name,
     coords: [row.latitude, row.longitude],
@@ -437,55 +437,85 @@ export async function searchInventory(term) {
     status: row.status,
     rank: row.rank,
   }));
-
-  // Best-effort "Neighborhood Demand" signal (see
-  // 021_frictionless_registration_and_services.sql, Part 5). Logs one
-  // row per distinct matched category per search — deliberately
-  // fire-and-forget: a logging failure must never surface as a broken
-  // search for the resident actually looking for a product.
-  const distinctCategories = [...new Set(results.map((r) => r.category).filter(Boolean))];
-  if (distinctCategories.length > 0) {
-    supabase
-      .from("search_events")
-      .insert(distinctCategories.map((matched_category) => ({ matched_category })))
-      .then(({ error: logError }) => {
-        if (logError) console.error("search_events logging failed (non-fatal):", logError);
-      });
-  }
-
-  return results;
 }
 
 /**
- * fetchNeighborhoodDemand
- * Backs the OwnerDashboard "Neighborhood Demand" metric card — counts
- * recent public searches (last 7 days) whose matched category overlaps
- * with this store's own inventory categories. See the Part 5 note in
- * 021_frictionless_registration_and_services.sql for exactly what this
- * does and doesn't measure (it's app-wide, not geofenced to "nearby").
+ * logSearchDemand
+ * The actual "Neighborhood Demand" write — pulled out of
+ * searchInventory() itself (see useDebouncedSearchMatches for why) so
+ * it can be called once per settled search rather than once per
+ * keystroke-triggered lookup.
  *
- * Returns `null` (not 0) on an actual fetch/RPC error — this matters:
- * a genuinely quiet week and "the store_demand_count() function/table
- * doesn't exist yet because the SQL migration was never run" used to
- * look identical in the UI (both showed 0), making this feature
- * impossible to debug from the app alone. The caller renders these two
- * cases with different, honest messages.
+ * Logs one row per distinct (store, product) pair that this search
+ * actually matched — not just a category — so a store owner can see
+ * WHICH of their own products people searched for, not just an
+ * app-wide category count disconnected from anything they can act on.
+ * matched_category is still included for now (harmless, potentially
+ * useful for future app-wide analytics) but nothing currently reads it
+ * back. Pure fire-and-forget insert: a logging failure must never
+ * surface as a broken search for the resident actually looking for a
+ * product.
+ *
+ * @param {Array<{storeId, productName, category}>} results
+ */
+function logSearchDemand(results) {
+  if (!results || results.length === 0) return;
+
+  const seen = new Set();
+  const rows = [];
+  for (const r of results) {
+    if (!r.storeId || !r.productName) continue;
+    const key = `${r.storeId}::${r.productName}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push({
+      matched_store_id: r.storeId,
+      matched_product_name: r.productName,
+      matched_category: r.category ?? null,
+    });
+  }
+  if (rows.length === 0) return;
+
+  supabase
+    .from("search_events")
+    .insert(rows)
+    .then(({ error: logError }) => {
+      if (logError) console.error("search_events logging failed (non-fatal):", logError);
+    });
+}
+
+/**
+ * fetchNeighborhoodDemandItems
+ * Backs the OwnerDashboard "Neighborhood Demand" card — returns which
+ * of THIS store's own products people actually searched for in the
+ * last N days, and how many times each, most-searched first (capped at
+ * 10 by the RPC). Concrete and actionable by design: "Tablet — 3
+ * searches" tells an owner something they can act on; an app-wide
+ * category count didn't.
+ *
+ * Returns `null` (not []) on an actual fetch/RPC error — an empty
+ * array legitimately means "no matching searches this week", which is
+ * a different, honest message from "couldn't check right now". See
+ * NeighborhoodDemandCard for how these render differently.
  *
  * @param {string} storeId
  * @param {number} [days=7]
- * @returns {Promise<number|null>}
+ * @returns {Promise<Array<{productName: string, count: number}>|null>}
  */
-export async function fetchNeighborhoodDemand(storeId, days = 7) {
+export async function fetchNeighborhoodDemandItems(storeId, days = 7) {
   if (!storeId) return null;
-  const { data, error } = await supabase.rpc("store_demand_count", {
+  const { data, error } = await supabase.rpc("store_demand_items", {
     p_store_id: storeId,
     p_days: days,
   });
   if (error) {
-    console.error("fetchNeighborhoodDemand failed:", error);
+    console.error("fetchNeighborhoodDemandItems failed:", error);
     return null;
   }
-  return data ?? 0;
+  return (data ?? []).map((row) => ({
+    productName: row.product_name,
+    count: row.search_count,
+  }));
 }
 
 export async function nearbyStores(lat, lng, radiusMeters = 5000) {
@@ -639,15 +669,35 @@ export async function fetchMonthlyRevenue(storeId) {
   }));
 }
 
+// A search that matches something logs toward Neighborhood Demand — but
+// typing is a sequence of intermediate states ("T", "Ta", "Tab", ...,
+// "Tablet"), and several of those partial strings can independently
+// match a product via fuzzy/trigram similarity, not just the final
+// word. Logging straight off the fast, 300ms display-debounce meant a
+// single typed search could produce two or three separate logged
+// events — confirmed in testing: searching "Tablet" once produced 2
+// rows. This constant is a SECOND, longer debounce specifically for
+// logging, layered on top of the fast one: it only fires once the
+// search term has stopped changing for a real pause, not just a normal
+// gap between keystrokes.
+const DEMAND_LOG_SETTLE_MS = 1200;
+
 export function useDebouncedSearchMatches(searchQuery, debounceMs = 300) {
   const [matches, setMatches] = useState(new Map());
   const [searching, setSearching] = useState(false);
   const timeoutRef = useRef(null);
+  const logTimeoutRef = useRef(null);
+  // Dedupes consecutive logs of the identical term — e.g. a component
+  // re-render that doesn't actually change what was typed shouldn't log
+  // a second time for the same search.
+  const lastLoggedTermRef = useRef("");
 
   useEffect(() => {
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    if (logTimeoutRef.current) clearTimeout(logTimeoutRef.current);
 
-    if (!searchQuery.trim()) {
+    const trimmed = searchQuery.trim();
+    if (!trimmed) {
       setMatches(new Map());
       setSearching(false);
       return;
@@ -655,7 +705,7 @@ export function useDebouncedSearchMatches(searchQuery, debounceMs = 300) {
 
     setSearching(true);
     timeoutRef.current = setTimeout(async () => {
-      const results = await searchInventory(searchQuery);
+      const results = await searchInventory(trimmed);
       const byStore = new Map();
       const severity = { out: 0, low: 1, available: 2 };
 
@@ -672,9 +722,25 @@ export function useDebouncedSearchMatches(searchQuery, debounceMs = 300) {
       }
       setMatches(byStore);
       setSearching(false);
+
+      // Demand logging is intentionally decoupled from the fast
+      // display update above — it waits an ADDITIONAL settle period
+      // after results already came back. If the person keeps typing
+      // during that window, this timer gets cleared and replaced by
+      // the next render's own timer (standard debounce cleanup below),
+      // so only the term they actually stopped on ever gets logged.
+      logTimeoutRef.current = setTimeout(() => {
+        if (results.length > 0 && trimmed !== lastLoggedTermRef.current) {
+          lastLoggedTermRef.current = trimmed;
+          logSearchDemand(results);
+        }
+      }, DEMAND_LOG_SETTLE_MS);
     }, debounceMs);
 
-    return () => clearTimeout(timeoutRef.current);
+    return () => {
+      clearTimeout(timeoutRef.current);
+      clearTimeout(logTimeoutRef.current);
+    };
   }, [searchQuery, debounceMs]);
 
   return { matches, searching };

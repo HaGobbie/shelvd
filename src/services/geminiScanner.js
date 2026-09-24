@@ -177,7 +177,35 @@ function normalizeReceiptItem(raw) {
 }
 
 /**
- * scanProductImage
+ * extractFunctionErrorMessage
+ * supabase.functions.invoke() collapses every failure mode — a genuine
+ * network problem, the function not being deployed (404), CORS being
+ * misconfigured, or the function running fine but reporting something
+ * specific (like a missing GEMINI_API_KEY secret) — into the same
+ * generic `error` object, with the function's own actual JSON response
+ * body sitting unread in `error.context` (a raw Response). Both scan
+ * functions used to just show one fixed "couldn't reach the scanner"
+ * message regardless of which of those it actually was, which made a
+ * real, fixable server-side problem (e.g. the Edge Function never being
+ * deployed, or its secret never being set) look identical to a flaky
+ * connection — impossible to tell apart from the error alone. This
+ * reads the real body when there is one, so the thrown error (and the
+ * console log) says what actually happened instead of guessing.
+ */
+async function extractFunctionErrorMessage(error, fallback) {
+  try {
+    if (error?.context && typeof error.context.json === "function") {
+      const body = await error.context.json();
+      if (body?.error) return body.error;
+    }
+  } catch {
+    // context wasn't JSON (e.g. a plain 404/502 from infrastructure
+    // rather than our own function code) — fall through to the
+    // client-library's own message, which is still more specific than
+    // nothing.
+  }
+  return error?.message || fallback;
+}
  * @param {File} file — an image File straight from an <input type="file"
  *   accept="image/*" capture="environment"> element.
  * @returns {Promise<{name, category, customCategory, unit, estimatedPrice, isService}>}
@@ -195,8 +223,12 @@ export async function scanProductImage(file) {
   });
 
   if (error) {
-    console.error("scan-product-image invoke failed:", error);
-    throw new Error("Couldn't reach the photo scanner. Please try again or enter details manually.");
+    const detail = await extractFunctionErrorMessage(
+      error,
+      "Couldn't reach the photo scanner. Please try again or enter details manually."
+    );
+    console.error("scan-product-image invoke failed:", detail, error);
+    throw new Error(detail);
   }
   if (!data?.result) {
     console.error("scan-product-image returned no result:", data);
@@ -228,8 +260,12 @@ export async function scanReceiptImage(file) {
   });
 
   if (error) {
-    console.error("scan-receipt-image invoke failed:", error);
-    throw new Error("Couldn't reach the receipt scanner. Please try again or add items manually.");
+    const detail = await extractFunctionErrorMessage(
+      error,
+      "Couldn't reach the receipt scanner. Please try again or add items manually."
+    );
+    console.error("scan-receipt-image invoke failed:", detail, error);
+    throw new Error(detail);
   }
   if (!data?.items) {
     console.error("scan-receipt-image returned no items:", data);

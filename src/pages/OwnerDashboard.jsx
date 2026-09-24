@@ -54,7 +54,7 @@ import {
   Wallet,
 } from "lucide-react";
 import { supabase } from "../config/supabaseClient";
-import { useMyStores, useOwnerInventory, deleteStore, formatLastUpdated, formatPrice, recordStockAdjustment, fetchNeighborhoodDemand, fetchDailyTransactions } from "../hooks/useStores";
+import { useMyStores, useOwnerInventory, deleteStore, formatLastUpdated, formatPrice, recordStockAdjustment, fetchNeighborhoodDemandItems, fetchDailyTransactions } from "../hooks/useStores";
 import ProductFormModal from "../components/ProductFormModal";
 import ConfirmDeleteModal from "../components/ConfirmDeleteModal";
 import StoreRegistrationForm from "../components/StoreRegistrationForm";
@@ -564,56 +564,84 @@ function LoginScreen() {
   );
 }
 
-// ─── Neighborhood Demand metric card ──────────────────────────────────────────
-// Shows a store owner that residents are actually searching for what they
-// sell, before they've made a single sale — see fetchNeighborhoodDemand()
-// in useStores.js and the Part 5 caveats in
-// sql/021_frictionless_registration_and_services.sql for exactly what
-// this counts (app-wide category-matched searches, not a literal GPS
-// radius around the store).
+// ─── Neighborhood Demand card ──────────────────────────────────────────────────
+// Shows a store owner WHICH of their own products people are actually
+// searching for, before they've made a single sale — see
+// fetchNeighborhoodDemandItems() in useStores.js.
+//
+// v2: originally showed one bare app-wide category-matched count
+// ("18 searches"), which was both vague (not tied to anything the owner
+// could act on) and misleading (counted a search that matched a
+// completely different store across town just as much as one that
+// matched this store). Now shows a short list of the store's OWN
+// products that were actually searched for, most-searched first —
+// concrete enough to act on ("I should stock more of this"). Still not
+// geofenced to literal distance (a deliberate scope decision, not an
+// oversight — see the SQL migration's notes) and still anonymous: no
+// searcher identity, only aggregate product-level interest.
 function NeighborhoodDemandCard({ storeId }) {
   const { t } = useLanguage();
-  const [count, setCount] = useState(null);
+  const [items, setItems] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!storeId) return;
     let cancelled = false;
     setLoading(true);
-    fetchNeighborhoodDemand(storeId, 7).then((n) => {
-      if (!cancelled) { setCount(n); setLoading(false); }
+    fetchNeighborhoodDemandItems(storeId, 7).then((result) => {
+      if (!cancelled) { setItems(result); setLoading(false); }
     });
     return () => { cancelled = true; };
   }, [storeId]);
 
+  const totalSearches = items?.reduce((sum, item) => sum + item.count, 0) ?? 0;
+
   return (
     <div className="metric-card" style={{
-      display: "flex", alignItems: "center", gap: 12,
+      display: "flex", flexDirection: "column", gap: 8,
       padding: "14px 16px", borderRadius: "var(--radius-md, 10px)",
       border: "1px solid var(--color-border)", background: "var(--color-surface)",
       marginBottom: 10,
     }}>
-      <div style={{
-        width: 40, height: 40, borderRadius: "50%", flexShrink: 0,
-        display: "flex", alignItems: "center", justifyContent: "center",
-        background: "var(--color-available-bg)", color: "var(--color-available)",
-      }}>
-        <Users size={20} strokeWidth={2} />
-      </div>
-      <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: "var(--color-text-muted)" }}>
-          {t("owner.dashboard.neighborhoodDemandTitle")}
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{
+          width: 40, height: 40, borderRadius: "50%", flexShrink: 0,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          background: "var(--color-available-bg)", color: "var(--color-available)",
+        }}>
+          <Users size={20} strokeWidth={2} />
         </div>
-        <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--color-text-primary)", marginTop: 2 }}>
-          {loading
-            ? t("owner.dashboard.neighborhoodDemandLoading")
-            : count === null
-              ? t("owner.dashboard.neighborhoodDemandError")
-              : count > 0
-              ? t("owner.dashboard.neighborhoodDemandCount", count)
-              : t("owner.dashboard.neighborhoodDemandZero")}
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: "var(--color-text-muted)" }}>
+            {t("owner.dashboard.neighborhoodDemandTitle")}
+          </div>
+          <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--color-text-primary)", marginTop: 2 }}>
+            {loading
+              ? t("owner.dashboard.neighborhoodDemandLoading")
+              : items === null
+                ? t("owner.dashboard.neighborhoodDemandError")
+                : items.length === 0
+                  ? t("owner.dashboard.neighborhoodDemandZero")
+                  : t("owner.dashboard.neighborhoodDemandTotal", totalSearches)}
+          </div>
         </div>
       </div>
+
+      {!loading && items && items.length > 0 && (
+        <ul style={{ listStyle: "none", margin: 0, padding: "2px 0 0 52px", display: "flex", flexDirection: "column", gap: 4 }}>
+          {items.map((item) => (
+            <li key={item.productName} style={{
+              display: "flex", justifyContent: "space-between", gap: 12,
+              fontSize: 13, color: "var(--color-text-secondary)",
+            }}>
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.productName}</span>
+              <span style={{ flexShrink: 0, fontWeight: 700, color: "var(--color-text-primary)" }}>
+                {t("owner.dashboard.neighborhoodDemandItemCount", item.count)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
@@ -1129,8 +1157,8 @@ export default function OwnerDashboard({ session }) {
       <main className="dashboard-main">
         {myStore && (
           <>
-            <NeighborhoodDemandCard storeId={myStore.id} />
             <DailyCashOutCard storeId={myStore.id} refreshKey={inventory.length + inventory.reduce((s, p) => s + (p.quantity ?? 0), 0)} />
+            <NeighborhoodDemandCard storeId={myStore.id} />
           </>
         )}
 
