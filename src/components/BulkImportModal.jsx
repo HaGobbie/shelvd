@@ -55,7 +55,7 @@ import {
   Camera,
 } from "lucide-react";
 import { scanReceiptImage } from "../services/geminiScanner";
-import { bulkUpsertInventory } from "../hooks/useStores";
+import { bulkUpsertInventory, bulkAddInventoryQuantities } from "../hooks/useStores";
 import {
   TARGET_FIELDS,
   guessColumnMapping,
@@ -157,6 +157,15 @@ function buildReviewRowsFromReceiptItems(items, t) {
  * fine (tap it to expand into an editable card). Rows that need
  * attention always render in the expanded, editable form directly —
  * there's nothing to collapse when something actually needs fixing.
+ *
+ * onToggleExcluded(excluded: boolean) — called with the row's NEW
+ * excluded value directly (true = skip this row, false = include it).
+ * Both checkboxes below compute that value once, as `!e.target.checked`,
+ * and the caller should just store it as-is. A previous version passed
+ * an `included` value that the caller then negated AGAIN before storing
+ * it — two negations that silently canceled into the wrong polarity,
+ * which is exactly why unchecking a box used to snap right back to
+ * checked. There's only one negation in this whole path now.
  */
 function ReviewItemCard({ row, dupSku, flagged, expanded, onToggleExpand, onChange, onToggleExcluded, t }) {
   if (!flagged && !expanded) {
@@ -307,7 +316,11 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
   const [csvRows, setCsvRows] = useState([]);
   const [columnMapping, setColumnMapping] = useState({});
   const [reviewRows, setReviewRows] = useState([]);
-  const [overwrite, setOverwrite] = useState(false);
+  // "skip" (keep existing row as-is), "replace" (overwrite it entirely),
+  // or "add" (add the imported quantity to what's already there — see
+  // bulkAddInventoryQuantities for why this needs different handling
+  // from the other two, which both go through a plain upsert).
+  const [conflictMode, setConflictMode] = useState("skip");
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState(null);
   const [showAllReady, setShowAllReady] = useState(false);
@@ -337,7 +350,7 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
     setCsvRows([]);
     setColumnMapping({});
     setReviewRows([]);
-    setOverwrite(false);
+    setConflictMode("skip");
     setImporting(false);
     setImportResult(null);
     setShowAllReady(false);
@@ -494,19 +507,32 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
         unit: r.unit?.trim() || "piece",
       }));
 
-    const { data, error } = await bulkUpsertInventory(storeId, validRows, { overwrite });
-
-    if (error) {
-      console.error("Bulk import failed:", error);
-      setImportResult({ error: error.message || t("owner.bulkImport.importFailed") });
-      setImporting(false);
-      return;
+    if (conflictMode === "add") {
+      const { data, error } = await bulkAddInventoryQuantities(storeId, validRows);
+      if (error) {
+        console.error("Bulk add-to-stock failed:", error);
+        setImportResult({ error: error.message || t("owner.bulkImport.importFailed") });
+        setImporting(false);
+        return;
+      }
+      const newCount = data?.filter((r) => r.was_new).length ?? 0;
+      const addedToCount = data?.filter((r) => !r.was_new).length ?? 0;
+      setImportResult({ mode: "add", newCount, addedToCount });
+    } else {
+      const { data, error } = await bulkUpsertInventory(storeId, validRows, { overwrite: conflictMode === "replace" });
+      if (error) {
+        console.error("Bulk import failed:", error);
+        setImportResult({ error: error.message || t("owner.bulkImport.importFailed") });
+        setImporting(false);
+        return;
+      }
+      setImportResult({
+        mode: conflictMode,
+        insertedCount: data?.length ?? 0,
+        skippedCount: conflictMode === "replace" ? 0 : validRows.length - (data?.length ?? 0),
+      });
     }
 
-    setImportResult({
-      insertedCount: data?.length ?? 0,
-      skippedCount: overwrite ? 0 : validRows.length - (data?.length ?? 0),
-    });
     setImporting(false);
     setStep("done");
     onImported?.();
@@ -720,7 +746,7 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
                       expanded
                       dupSku={rowHasDuplicateSku(row)}
                       onChange={(patch) => updateRow(row.id, patch)}
-                      onToggleExcluded={(included) => updateRow(row.id, { excluded: !included })}
+                      onToggleExcluded={(excluded) => updateRow(row.id, { excluded })}
                       t={t}
                     />
                   ))}
@@ -745,7 +771,7 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
                           dupSku={rowHasDuplicateSku(row)}
                           onToggleExpand={() => toggleExpanded(row.id)}
                           onChange={(patch) => updateRow(row.id, patch)}
-                          onToggleExcluded={(included) => updateRow(row.id, { excluded: !included })}
+                          onToggleExcluded={(excluded) => updateRow(row.id, { excluded })}
                           t={t}
                         />
                       ))}
@@ -766,11 +792,15 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
                   {t("owner.bulkImport.conflictPrompt")}
                 </p>
                 <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, marginBottom: 6 }}>
-                  <input type="radio" checked={!overwrite} onChange={() => setOverwrite(false)} />
+                  <input type="radio" checked={conflictMode === "skip"} onChange={() => setConflictMode("skip")} />
                   {t("owner.bulkImport.skipOption")}
                 </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, marginBottom: 6 }}>
+                  <input type="radio" checked={conflictMode === "add"} onChange={() => setConflictMode("add")} />
+                  {t("owner.bulkImport.addOption")}
+                </label>
                 <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
-                  <input type="radio" checked={overwrite} onChange={() => setOverwrite(true)} />
+                  <input type="radio" checked={conflictMode === "replace"} onChange={() => setConflictMode("replace")} />
                   {t("owner.bulkImport.overwriteOption")}
                 </label>
               </div>
@@ -784,13 +814,30 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
           {step === "done" && importResult && !importResult.error && (
             <div style={{ textAlign: "center", padding: "32px 0" }}>
               <CheckCircle2 size={48} style={{ color: "var(--color-available)", marginBottom: 16 }} />
-              <p style={{ fontWeight: 700, fontSize: 16, marginBottom: 4 }}>
-                {t("owner.bulkImport.imported", importResult.insertedCount)}
-              </p>
-              {importResult.skippedCount > 0 && (
-                <p style={{ color: "var(--color-text-secondary)", fontSize: 14 }}>
-                  {t("owner.bulkImport.skipped", importResult.skippedCount)}
-                </p>
+              {importResult.mode === "add" ? (
+                <>
+                  {importResult.addedToCount > 0 && (
+                    <p style={{ fontWeight: 700, fontSize: 16, marginBottom: 4 }}>
+                      {t("owner.bulkImport.addedToStock", importResult.addedToCount)}
+                    </p>
+                  )}
+                  {importResult.newCount > 0 && (
+                    <p style={{ color: "var(--color-text-secondary)", fontSize: 14 }}>
+                      {t("owner.bulkImport.newItemsCreated", importResult.newCount)}
+                    </p>
+                  )}
+                </>
+              ) : (
+                <>
+                  <p style={{ fontWeight: 700, fontSize: 16, marginBottom: 4 }}>
+                    {t("owner.bulkImport.imported", importResult.insertedCount)}
+                  </p>
+                  {importResult.skippedCount > 0 && (
+                    <p style={{ color: "var(--color-text-secondary)", fontSize: 14 }}>
+                      {t("owner.bulkImport.skipped", importResult.skippedCount)}
+                    </p>
+                  )}
+                </>
               )}
             </div>
           )}

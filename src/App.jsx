@@ -350,14 +350,20 @@ function AppShell() {
       >
         {!isOnline && <OfflineBanner />}
         <OwnerDashboard session={session} />
-        {/* Nav back to map */}
+        {/* Nav back to map. z-index deliberately kept well below every
+            modal/sheet overlay in the app (the lowest of which is 1000,
+            in ProductFormModal/StoreEditModal; OnboardingTour goes up to
+            2003) — this used to sit at 9999, ABOVE all of them, which
+            let it show through and stay clickable over any open popup,
+            especially in the same bottom-right corner on mobile where
+            several sheets' primary actions also live. */}
         <a
           href="#/"
           style={{
             position: "fixed",
             bottom: "calc(24px + env(safe-area-inset-bottom, 0px))",
             right: 20,
-            zIndex: 9999,
+            zIndex: 50,
             background: "var(--color-brand-primary)",
             color: "#fff",
             padding: "10px 18px",

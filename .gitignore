@@ -9,3 +9,5 @@ supabase/.temp/project-ref
 supabase/.temp/rest-version
 supabase/.temp/storage-migration
 supabase/.temp/storage-version
+mergedense.py
+project_context_dense.md

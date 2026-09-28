@@ -16,12 +16,19 @@
 // A single product photo shows clean, well-lit packaging design. A
 // receipt is much messier — faded thermal print, heavy abbreviation
 // ("CORNBF 150G"), and a qty/unit-price/total-price layout the model
-// has to correctly disentangle per line. Expect a meaningfully higher
-// error rate than the single-product scanner. That's why every item
-// here carries a `low_confidence` flag: BulkImportModal turns that into
-// a normal validation error, which means an uncertain line just lands
-// in the SAME flagged-first review cards as a bad CSV row — the review
-// UI is the safety net, not a perfect extraction.
+// has to correctly disentangle per line. This function actively asks
+// the model to resolve that abbreviated shorthand into a proper,
+// human-readable product name (e.g. "FemmeTsu2Ply250" ->
+// "Femme Tissue 2-Ply 250 Sheets") using its general knowledge of
+// retail products, rather than leaving raw receipt text in the review
+// list — a deliberate choice, since "FemmeTsu2Ply250" is meaningless to
+// glance at during review. Expect a meaningfully higher error rate on
+// this than the single-product scanner regardless. That's why every
+// item here carries a `low_confidence` flag: BulkImportModal turns that
+// into a normal validation error, which means an uncertain name
+// resolution (or an uncertain qty/price) just lands in the SAME
+// flagged-first review cards as a bad CSV row — the review UI is the
+// safety net, not a perfect extraction.
 //
 // DEPLOYMENT (one-time):
 //   1. supabase functions deploy scan-receipt-image
@@ -68,10 +75,17 @@ const SYSTEM_PROMPT =
   "name/address/header, the subtotal, tax (VAT), discount, total amount " +
   "due, cash tendered, change, or any payment/loyalty-program text — " +
   "those are not products. For each genuine line item: " +
-  "(1) name — clean up spacing/capitalization only; do not guess an " +
-  "expansion of an abbreviation unless you are confident (e.g. leave " +
-  "\"CORNBF 150G\" mostly as-is rather than inventing a full product name " +
-  "you are not sure of). " +
+  "(1) name — receipts print heavily abbreviated shorthand (e.g. " +
+  "\"FemmeTsu2Ply250\", \"DelMontePttCrspOrg\"). Turn this into the actual, " +
+  "proper product name a shopper would recognize on a shelf, using your " +
+  "knowledge of common Philippine retail products and brands — expand " +
+  "the brand name, product line, and size/variant into normal words (e.g. " +
+  "\"FemmeTsu2Ply250\" -> \"Femme Tissue 2-Ply 250 Sheets\", " +
+  "\"DelMontePttCrspOrg\" -> \"Del Monte Pineapple Crush Original\"). Do " +
+  "your best to resolve it fully rather than leaving it abbreviated. Only " +
+  "if you genuinely cannot identify what the product is at all, keep the " +
+  "name close to what's printed instead of inventing something — and in " +
+  "that case set low_confidence to true so a human reviews it. " +
   "(2) category — the single closest match from the allowed list. " +
   "(3) unit — the most natural selling unit for this item (piece, pack, " +
   "kg, bottle, etc). " +
@@ -82,10 +96,11 @@ const SYSTEM_PROMPT =
   "quantity yourself rather than returning the total. If you cannot " +
   "confidently determine a price at all, return null rather than " +
   "guessing. " +
-  "(6) low_confidence — set true if ANY of the name, quantity, or price " +
-  "for this specific line is unclear, blurry, cut off, or ambiguous — be " +
-  "honest and generous about flagging uncertainty here, since a human " +
-  "will review every flagged line before anything is saved. " +
+  "(6) low_confidence — set true if you had to guess at the product name " +
+  "expansion with real uncertainty, or if the quantity or price for this " +
+  "specific line is unclear, blurry, cut off, or ambiguous — be honest " +
+  "and generous about flagging uncertainty here, since a human will " +
+  "review every flagged line before anything is saved. " +
   "Return an empty array if the image does not look like a receipt at all.";
 
 const RESPONSE_SCHEMA = {

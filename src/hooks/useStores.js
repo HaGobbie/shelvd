@@ -346,6 +346,40 @@ export async function bulkUpsertInventory(storeId, rows, { overwrite } = { overw
     .select("id, name, price, status, quantity, low_stock_threshold, sku, description, unit, is_service");
 }
 
+/**
+ * bulkAddInventoryQuantities
+ * The third bulk-import conflict option: ADD the imported quantity to
+ * whatever a matching product already has, rather than skip or
+ * overwrite. See 024_bulk_add_inventory_quantities.sql for exactly why
+ * this needs a real RPC instead of a plain .upsert() (Postgres can
+ * reference a row's own current value inside an ON CONFLICT DO UPDATE;
+ * the supabase-js query builder has no way to express that) and why it
+ * writes to the transaction ledger when the other bulk-import modes
+ * don't (this is unambiguously a restock action).
+ *
+ * @param {string} storeId
+ * @param {Array<{name, category, price, quantity?, lowStockThreshold?, sku?, description?, unit?, isService?}>} rows
+ * @returns {Promise<{data: Array<{id, name, quantity, was_new}>|null, error}>}
+ */
+export async function bulkAddInventoryQuantities(storeId, rows) {
+  const payload = rows.map((row) => ({
+    name: row.name,
+    category: row.category,
+    price: row.price,
+    quantity: row.quantity ?? 0,
+    lowStockThreshold: row.lowStockThreshold ?? 5,
+    sku: row.sku ?? null,
+    description: row.description ?? null,
+    unit: row.unit ?? "piece",
+    isService: row.isService ?? false,
+  }));
+
+  return supabase.rpc("bulk_add_inventory_quantities", {
+    p_store_id: storeId,
+    p_rows: payload,
+  });
+}
+
 export async function deleteStore(storeId) {
   return supabase.from("stores").delete().eq("id", storeId);
 }
