@@ -41,6 +41,7 @@ function mapStoreRow(row) {
     instagramUrl: row.instagram_url ?? null,
     tiktokUrl: row.tiktok_url ?? null,
     googleMapsUrl: row.google_maps_url ?? null,
+    logoUrl: row.logo_url ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -188,7 +189,7 @@ export function useStoreDetails(storeId) {
         supabase
           .from("stores")
           .select(
-            "id, name, type, address, owner_name, contact_number, owner_id, owner_email, latitude, longitude, status, worst_status, facebook_url, instagram_url, tiktok_url, google_maps_url, updated_at"
+            "id, name, type, address, owner_name, contact_number, owner_id, owner_email, latitude, longitude, status, worst_status, facebook_url, instagram_url, tiktok_url, google_maps_url, logo_url, updated_at"
           )
           .eq("id", storeId)
           .single(),
@@ -264,7 +265,7 @@ export function useMyStores(userId) {
     const { data, error } = await supabase
       .from("stores")
       .select(
-        "id, name, type, address, owner_name, contact_number, owner_id, owner_email, latitude, longitude, status, worst_status, rejection_reason, facebook_url, instagram_url, tiktok_url, google_maps_url, created_at, updated_at"
+        "id, name, type, address, owner_name, contact_number, owner_id, owner_email, latitude, longitude, status, worst_status, rejection_reason, facebook_url, instagram_url, tiktok_url, google_maps_url, logo_url, created_at, updated_at"
       )
       .eq("owner_id", userId)
       .order("created_at", { ascending: true });
@@ -714,6 +715,30 @@ export async function fetchMonthlyRevenue(storeId) {
 // logging, layered on top of the fast one: it only fires once the
 // search term has stopped changing for a real pause, not just a normal
 // gap between keystrokes.
+/**
+ * fetchTopProducts — best sellers for a store. Pass any date inside the month
+ * you want as "YYYY-MM", or null for all time. Backed by top_products_sold()
+ * (sql/031).
+ * @returns {Promise<Array<{productId, name, unitsSold, earnings}>>}
+ */
+export async function fetchTopProducts(storeId, month = null, limit = 5) {
+  const { data, error } = await supabase.rpc("top_products_sold", {
+    p_store_id: storeId,
+    p_month: month ? `${month}-01` : null,
+    p_limit: limit,
+  });
+  if (error) {
+    console.error("fetchTopProducts failed:", error);
+    return [];
+  }
+  return (data ?? []).map((r) => ({
+    productId: r.product_id,
+    name: r.product_name,
+    unitsSold: Number(r.units_sold),
+    earnings: Number(r.total_earnings),
+  }));
+}
+
 const DEMAND_LOG_SETTLE_MS = 1200;
 
 export function useDebouncedSearchMatches(searchQuery, debounceMs = 300) {
@@ -779,5 +804,7 @@ export function useDebouncedSearchMatches(searchQuery, debounceMs = 300) {
 
   return { matches, searching };
 }
+
+
 
 

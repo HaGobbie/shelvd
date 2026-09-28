@@ -126,14 +126,13 @@ export default function ProductCard({ product, onQuantityChange, onEdit, onDelet
           <motion.div className="product-card__body"
             initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.22 }}>
-            <div className="product-card__meta">
-              <div className="product-card__timestamp"><Clock size={12} />&nbsp;{formatLastUpdated(product.lastUpdated)}</div>
-              {product.sku && <div className="product-card__sku">SKU: {product.sku}</div>}
+            <div className="product-card__body-inner">
+              <div className="product-card__updated"><Clock size={13} /> {formatLastUpdated(product.lastUpdated)}</div>
               {product.description && <p className="product-card__desc">{product.description}</p>}
+              {product.isService
+                ? <ServiceAvailabilityToggle product={product} onChange={handleQuantityChange} />
+                : <StockAdjuster product={product} onCommit={handleQuantityChange} />}
             </div>
-            {product.isService
-              ? <ServiceAvailabilityToggle product={product} onChange={handleQuantityChange} />
-              : <StockAdjuster product={product} onCommit={handleQuantityChange} />}
           </motion.div>
         )}
       </AnimatePresence>

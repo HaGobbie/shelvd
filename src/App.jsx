@@ -36,6 +36,7 @@ import { MAP_TOUR_STEPS, MAP_TOUR_STORAGE_KEY } from "./tours/mapTourSteps";
 
 import "./styles/App.css";
 import "./styles/shelvd-v2.css";
+import "./styles/shelvd-v3.css";
 
 // ─── OAuth hash sanitizer ─────────────────────────────────────────────────
 // Runs ONCE, at module load — before the App component ever renders, and
@@ -435,7 +436,9 @@ function AppShell() {
         onClose={handleSheetClose}
       />
 
-      {/* Shopping list FAB — stacked just above the store-owner FAB */}
+      {/* Shopping list FAB — top of the right-hand stack: store FAB (24px) →
+          locate-me button (92px, MapContainer.jsx) → this one (160px). It used to sit at
+          88px and covered the locate button. */}
       <button
         type="button"
         data-tour-id="map-list-fab"
@@ -444,7 +447,7 @@ function AppShell() {
         title={t("list.title")}
         style={{
           position: "fixed",
-          bottom: "calc(24px + 64px + env(safe-area-inset-bottom, 0px))",
+          bottom: "calc(160px + env(safe-area-inset-bottom, 0px))",
           right: 20,
           zIndex: 800,
           background: "var(--color-surface)",

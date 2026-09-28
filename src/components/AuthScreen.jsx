@@ -16,6 +16,7 @@ import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Store, LogIn, UserPlus, Mail, KeyRound, ArrowLeft, CheckCircle2, Languages, Sun, Moon } from "lucide-react";
 import { supabase } from "../config/supabaseClient";
+import BrandLogo from "./BrandLogo";
 import { useLanguage } from "../i18n/LanguageContext";
 import { useTheme } from "../theme/ThemeContext";
 
@@ -188,7 +189,7 @@ export default function AuthScreen() {
     <div className="login-screen" style={{ position: "relative" }}>
       <TopToggles />
       <div className="login-card">
-        <div className="login-card__logo"><Store size={36} /></div>
+        <div className="login-card__logo login-card__logo--brand"><BrandLogo size={46} /></div>
 
         {notice ? (
           <div className="auth-notice">

@@ -3,6 +3,11 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [main]
+    # Store logos are committed to this folder by the upload-store-logo Edge
+    # Function and served straight from raw.githubusercontent.com, so a push
+    # that ONLY touches them doesn't need a rebuild/redeploy of the site.
+    paths-ignore:
+      - "public/store-logos/**"
   workflow_dispatch:
 
 concurrency:
@@ -36,6 +41,11 @@ jobs:
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
           VITE_CARTO_API_KEY: ${{ secrets.VITE_CARTO_API_KEY }}
 
+      # Logos are served from raw.githubusercontent.com, not from the site —
+      # keep them out of the deployed bundle (and out of the PWA cache).
+      - name: Drop store logos from the deployed bundle
+        run: rm -rf dist/store-logos
+
       - name: Upload build artifact
         uses: actions/upload-pages-artifact@v3
         with:
@@ -51,3 +61,5 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+

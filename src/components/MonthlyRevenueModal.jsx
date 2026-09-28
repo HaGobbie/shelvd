@@ -1,169 +1,191 @@
 // src/components/MonthlyRevenueModal.jsx
-// Viewer for aggregated monthly revenue, with a month picker to jump to
-// a specific month, plus a list of every month on record for context,
-// and a CSV export covering all months.
+// Monthly revenue report: a 12-month bar chart (tap a bar to pick that month),
+// the picked month's total with a month-over-month change, and the month's
+// best-selling products (or all-time, via the toggle).
+//
+// Data: monthly_revenue_report() for the chart, top_products_sold() (sql/031)
+// for the best sellers. CSV export of all months is unchanged.
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, FileDown, Calendar } from "lucide-react";
-import { fetchMonthlyRevenue, formatPrice } from "../hooks/useStores";
+import { X, FileDown, TrendingUp, TrendingDown, Minus, Trophy } from "lucide-react";
+import { fetchMonthlyRevenue, fetchTopProducts, formatPrice } from "../hooks/useStores";
 import { exportMonthlyRevenueCSV } from "../utils/csvExport";
 import { useLanguage } from "../i18n/LanguageContext";
 
-const overlayVariants = {
-  hidden: { opacity: 0 },
-  visible: { opacity: 1, transition: { duration: 0.2 } },
-  exit:    { opacity: 0, transition: { duration: 0.16 } },
-};
+const overlayVariants = { hidden: { opacity: 0 }, visible: { opacity: 1, transition: { duration: 0.2 } }, exit: { opacity: 0, transition: { duration: 0.16 } } };
 const sheetVariants = {
-  hidden:  { y: "100%", opacity: 0 },
+  hidden: { y: "100%", opacity: 0 },
   visible: { y: 0, opacity: 1, transition: { type: "spring", damping: 28, stiffness: 300, mass: 0.9 } },
-  exit:    { y: "100%", opacity: 0, transition: { type: "tween", ease: "easeIn", duration: 0.2 } },
+  exit: { y: "100%", opacity: 0, transition: { type: "tween", ease: "easeIn", duration: 0.2 } },
 };
 
-/** "YYYY-MM" for a Date, for the <input type="month"> value. */
-function toMonthInputValue(date) {
-  const d = new Date(date);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+const CHART_MONTHS = 12;
+const ym = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+// The RPC returns dates like "2026-09-01": read the text directly instead of
+// going through Date (which can slip a month in some time zones).
+const rowYm = (m) => String(m.month).slice(0, 7);
+const monthLabel = (key, opts) => new Date(`${key}-15T12:00:00`).toLocaleDateString(undefined, opts);
+
+function lastMonths(n) {
+  const out = [];
+  const now = new Date();
+  for (let i = n - 1; i >= 0; i--) out.push(ym(new Date(now.getFullYear(), now.getMonth() - i, 1)));
+  return out;
 }
 
-/**
- * @param {{ isOpen: boolean, onClose: Function, storeId: string, storeName: string }} props
- */
+function compactPeso(n) {
+  if (n >= 1_000_000) return `₱${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1000) return `₱${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`;
+  return `₱${Math.round(n)}`;
+}
+
+function RevenueChart({ series, selected, onSelect, t }) {
+  const max = Math.max(...series.map((s) => s.value), 1);
+  return (
+    <div className="rev-chart" role="group" aria-label={t("revenue.chartAria")}>
+      {series.map((s) => {
+        const h = s.value > 0 ? Math.max(6, (s.value / max) * 100) : 0;
+        const active = s.key === selected;
+        return (
+          <button key={s.key} type="button" className={`rev-chart__col ${active ? "rev-chart__col--active" : ""}`}
+            onClick={() => onSelect(s.key)} title={`${monthLabel(s.key, { month: "long", year: "numeric" })}: ${formatPrice(s.value)}`}
+            aria-pressed={active} aria-label={`${monthLabel(s.key, { month: "long", year: "numeric" })}: ${formatPrice(s.value)}`}>
+            <span className="rev-chart__value">{s.value > 0 ? compactPeso(s.value) : ""}</span>
+            <span className="rev-chart__track">
+              <span className="rev-chart__bar" style={{ height: `${h}%` }} />
+            </span>
+            <span className="rev-chart__label">{monthLabel(s.key, { month: "short" })}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** @param {{ isOpen: boolean, onClose: Function, storeId: string, storeName: string }} props */
 export default function MonthlyRevenueModal({ isOpen, onClose, storeId, storeName }) {
   const { t } = useLanguage();
-  const [selectedMonth, setSelectedMonth] = useState(() => toMonthInputValue(new Date()));
+  const [selected, setSelected] = useState(() => ym(new Date()));
   const [monthlyData, setMonthlyData] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [scope, setScope] = useState("month"); // "month" | "all"
+  const [top, setTop] = useState([]);
+  const [topLoading, setTopLoading] = useState(false);
 
-  const loadRevenue = useCallback(async () => {
+  const load = useCallback(async () => {
     if (!storeId) return;
     setLoading(true);
-    const data = await fetchMonthlyRevenue(storeId);
-    setMonthlyData(data);
+    setMonthlyData(await fetchMonthlyRevenue(storeId));
     setLoading(false);
   }, [storeId]);
+  useEffect(() => { if (isOpen) load(); }, [isOpen, load]);
 
   useEffect(() => {
-    if (isOpen) loadRevenue();
-  }, [isOpen, loadRevenue]);
+    if (!isOpen || !storeId) return;
+    let cancelled = false;
+    setTopLoading(true);
+    fetchTopProducts(storeId, scope === "month" ? selected : null, 5).then((rows) => {
+      if (!cancelled) { setTop(rows); setTopLoading(false); }
+    });
+    return () => { cancelled = true; };
+  }, [isOpen, storeId, selected, scope]);
 
-  const selectedMonthData = useMemo(
-    () => monthlyData.find((m) => toMonthInputValue(m.month) === selectedMonth),
-    [monthlyData, selectedMonth]
+  const byMonth = useMemo(() => new Map(monthlyData.map((m) => [rowYm(m), m])), [monthlyData]);
+  const series = useMemo(
+    () => lastMonths(CHART_MONTHS).map((key) => ({ key, value: Number(byMonth.get(key)?.totalEarnings ?? 0) })),
+    [byMonth]
   );
 
-  const handleExport = () => {
-    exportMonthlyRevenueCSV(monthlyData, storeName);
-  };
+  const cur = byMonth.get(selected);
+  const prevKey = (() => { const [y, m] = selected.split("-").map(Number); return ym(new Date(y, m - 2, 1)); })();
+  const prev = byMonth.get(prevKey);
+  const curTotal = Number(cur?.totalEarnings ?? 0);
+  const prevTotal = Number(prev?.totalEarnings ?? 0);
+  const pct = prevTotal > 0 ? ((curTotal - prevTotal) / prevTotal) * 100 : null;
+  const yearTotal = series.reduce((s, x) => s + x.value, 0);
+  const topMax = top[0]?.unitsSold || 1;
 
   return (
     <AnimatePresence>
       {isOpen && (
         <>
-          <motion.div
-            className="sheet-overlay" style={{ zIndex: 1200 }}
-            variants={overlayVariants} initial="hidden" animate="visible" exit="exit"
-            onClick={onClose} aria-hidden="true"
-          />
-          <motion.div
-            className="sheet-panel" style={{ zIndex: 1201, maxHeight: "94dvh", display: "flex", flexDirection: "column" }}
-            variants={sheetVariants} initial="hidden" animate="visible" exit="exit"
-            role="dialog" aria-modal="true" aria-label={t("owner.transactions.monthlyTitle")}
-          >
+          <motion.div className="sheet-overlay" style={{ zIndex: 1200 }} variants={overlayVariants} initial="hidden" animate="visible" exit="exit" onClick={onClose} aria-hidden="true" />
+          <motion.div className="sheet-panel" style={{ zIndex: 1201, maxHeight: "94dvh", display: "flex", flexDirection: "column" }}
+            variants={sheetVariants} initial="hidden" animate="visible" exit="exit" role="dialog" aria-modal="true" aria-label={t("owner.transactions.monthlyTitle")}>
             <div className="sheet-handle" aria-hidden="true" />
 
             <div className="sheet-header">
               <div className="sheet-header__info">
                 <h2 className="sheet-header__name">{t("owner.transactions.monthlyTitle")}</h2>
-                <span className="sheet-header__type">{t("owner.transactions.monthlySubtitle")}</span>
+                <span className="sheet-header__type">{t("revenue.subtitle")}</span>
               </div>
-              <button className="sheet-close-btn" onClick={onClose} aria-label={t("owner.transactions.close")} type="button">
-                <X size={20} strokeWidth={2} />
-              </button>
-            </div>
-
-            <div style={{ padding: "12px 20px", display: "flex", gap: 8, alignItems: "center", borderBottom: "1px solid var(--color-border)" }}>
-              <Calendar size={16} style={{ color: "var(--color-text-muted)" }} />
-              <input
-                type="month"
-                className="pform__input"
-                style={{ flex: 1 }}
-                value={selectedMonth}
-                max={toMonthInputValue(new Date())}
-                onChange={(e) => setSelectedMonth(e.target.value)}
-              />
-              <button
-                type="button"
-                onClick={handleExport}
-                disabled={monthlyData.length === 0}
-                style={{
-                  display: "inline-flex", alignItems: "center", gap: 6, height: 40, padding: "0 12px",
-                  borderRadius: "var(--radius-md, 8px)", fontSize: 12, fontWeight: 700,
-                  background: "var(--color-surface-3)", color: "var(--color-text-secondary)", border: "none",
-                  whiteSpace: "nowrap",
-                }}
-              >
+              <button type="button" className="rev-export" onClick={() => exportMonthlyRevenueCSV(monthlyData, storeName)} disabled={monthlyData.length === 0}>
                 <FileDown size={14} /> {t("owner.transactions.exportAllCsv")}
               </button>
+              <button className="sheet-close-btn" onClick={onClose} aria-label={t("owner.transactions.close")} type="button"><X size={20} strokeWidth={2} /></button>
             </div>
 
-            <div className="sheet-inventory" style={{ padding: "16px 20px 24px", flex: 1, overflowY: "auto" }}>
+            <div className="sheet-inventory rev-body">
               {loading ? (
-                <div style={{ display: "flex", justifyContent: "center", padding: 32 }}>
-                  <div className="map-loading-spinner" />
-                </div>
+                <div style={{ display: "flex", justifyContent: "center", padding: 32 }}><div className="map-loading-spinner" /></div>
               ) : (
                 <>
-                  {/* Focused view of the picked month */}
-                  <div
-                    style={{
-                      padding: "16px", borderRadius: 12, marginBottom: 20,
-                      background: selectedMonthData ? "var(--color-available-bg)" : "var(--color-surface-3)",
-                      color: selectedMonthData ? "var(--color-available)" : "var(--color-text-muted)",
-                    }}
-                  >
-                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>
-                      {new Date(selectedMonth + "-02").toLocaleDateString(undefined, { year: "numeric", month: "long" })}
+                  <section className="rev-card">
+                    <div className="rev-card__head">
+                      <h3>{t("revenue.last12")}</h3>
+                      <span>{t("revenue.yearTotal", formatPrice(yearTotal))}</span>
                     </div>
-                    {selectedMonthData ? (
-                      <>
-                        <div style={{ fontSize: 24, fontWeight: 800 }}>{formatPrice(selectedMonthData.totalEarnings)}</div>
-                        <div style={{ fontSize: 13 }}>{t("owner.transactions.unitsSold", selectedMonthData.unitsSold)}</div>
-                      </>
+                    {yearTotal === 0 ? (
+                      <p className="rev-empty">{t("revenue.noSalesYet")}</p>
                     ) : (
-                      <div style={{ fontSize: 14 }}>{t("owner.transactions.noSalesMonth")}</div>
+                      <RevenueChart series={series} selected={selected} onSelect={setSelected} t={t} />
                     )}
-                  </div>
+                  </section>
 
-                  {/* All months, for context/comparison */}
-                  {monthlyData.length > 0 && (
-                    <>
-                      <div style={{ fontSize: 12, fontWeight: 700, color: "var(--color-text-muted)", textTransform: "uppercase", marginBottom: 8 }}>
-                        {t("owner.transactions.allMonths")}
+                  <section className="rev-kpis">
+                    <div className="rev-kpi rev-kpi--main">
+                      <span>{monthLabel(selected, { month: "long", year: "numeric" })}</span>
+                      <strong>{formatPrice(curTotal)}</strong>
+                      <em>{cur ? t("owner.transactions.unitsSold", cur.unitsSold) : t("owner.transactions.noSalesMonth")}</em>
+                    </div>
+                    <div className={`rev-kpi ${pct === null ? "" : pct >= 0 ? "rev-kpi--up" : "rev-kpi--down"}`}>
+                      <span>{t("revenue.vsLast")}</span>
+                      <strong>
+                        {pct === null ? <Minus size={18} /> : pct >= 0 ? <TrendingUp size={18} /> : <TrendingDown size={18} />}
+                        {pct === null ? "—" : `${pct >= 0 ? "+" : ""}${pct.toFixed(0)}%`}
+                      </strong>
+                      <em>{pct === null ? t("revenue.noPrev") : t("revenue.prevWas", formatPrice(prevTotal))}</em>
+                    </div>
+                  </section>
+
+                  <section className="rev-card">
+                    <div className="rev-card__head">
+                      <h3><Trophy size={15} /> {t("revenue.topProducts")}</h3>
+                      <div className="rev-toggle" role="group">
+                        <button type="button" className={scope === "month" ? "is-active" : ""} onClick={() => setScope("month")}>{monthLabel(selected, { month: "short" })}</button>
+                        <button type="button" className={scope === "all" ? "is-active" : ""} onClick={() => setScope("all")}>{t("revenue.allTime")}</button>
                       </div>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                        {monthlyData.map((m) => (
-                          <button
-                            key={m.month}
-                            type="button"
-                            onClick={() => setSelectedMonth(toMonthInputValue(m.month))}
-                            style={{
-                              display: "flex", justifyContent: "space-between", alignItems: "center",
-                              padding: "10px 12px", borderRadius: 10, border: "none", cursor: "pointer",
-                              textAlign: "left",
-                              background: toMonthInputValue(m.month) === selectedMonth ? "var(--color-available-bg)" : "var(--color-surface-3)",
-                            }}
-                          >
-                            <span style={{ fontSize: 13, fontWeight: 600 }}>
-                              {new Date(m.month).toLocaleDateString(undefined, { year: "numeric", month: "long" })}
-                            </span>
-                            <span style={{ fontSize: 13, fontWeight: 700 }}>{formatPrice(m.totalEarnings)}</span>
-                          </button>
+                    </div>
+                    {topLoading ? (
+                      <p className="rev-empty">{t("owner.dashboard.cashOutLoading")}</p>
+                    ) : top.length === 0 ? (
+                      <p className="rev-empty">{t("revenue.noTop")}</p>
+                    ) : (
+                      <ol className="rev-top">
+                        {top.map((p, i) => (
+                          <li key={p.productId}>
+                            <span className="rev-top__rank">{i + 1}</span>
+                            <div className="rev-top__main">
+                              <div className="rev-top__row"><strong>{p.name}</strong><span>{t("revenue.units", p.unitsSold)}</span></div>
+                              <div className="rev-top__bar"><span style={{ width: `${Math.max(6, (p.unitsSold / topMax) * 100)}%` }} /></div>
+                              <em>{formatPrice(p.earnings)}</em>
+                            </div>
+                          </li>
                         ))}
-                      </div>
-                    </>
-                  )}
+                      </ol>
+                    )}
+                  </section>
                 </>
               )}
             </div>

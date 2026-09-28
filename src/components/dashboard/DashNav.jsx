@@ -7,6 +7,8 @@ import {
   ShoppingCart, Plus, AlertTriangle, BarChart3, Map as MapIcon, Shield,
 } from "lucide-react";
 import { useLanguage } from "../../i18n/LanguageContext";
+import { BrandTile } from "../BrandLogo";
+import StoreAvatar from "../StoreAvatar";
 
 function SideItem({ icon: Icon, label, active, onClick, tourId, badge }) {
   return (
@@ -20,16 +22,21 @@ function SideItem({ icon: Icon, label, active, onClick, tourId, badge }) {
 }
 
 /** Desktop sidebar. `view` is one of: inventory | add | csv | today | monthly. `addTab` is single | many. */
-export function Sidebar({ view, addTab, onNavigate, onNewTransaction, canSell, isSuperAdmin, storeName, alertCount }) {
+export function Sidebar({ view, addTab, onNavigate, onNewTransaction, canSell, isSuperAdmin, storeName, storeLogoUrl, alertCount }) {
   const { t } = useLanguage();
   return (
     <aside className="sidebar" aria-label={t("dash.nav.main")}>
       <div className="sidebar__brand">
-        <span className="sidebar__logo"><Store size={20} /></span>
+        <BrandTile size={38} tone="light" />
         <div>
           <strong>Shelvd</strong>
-          <span>{storeName}</span>
+          <span>{t("dash.nav.ownerSpace")}</span>
         </div>
+      </div>
+
+      <div className="sidebar__store">
+        <StoreAvatar name={storeName} logoUrl={storeLogoUrl} size={36} />
+        <span title={storeName}>{storeName}</span>
       </div>
 
       <button type="button" className="sidebar__cta" onClick={onNewTransaction} disabled={!canSell} data-tour-id="new-transaction-btn">

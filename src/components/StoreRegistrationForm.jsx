@@ -56,6 +56,7 @@ import { useLanguage } from "../i18n/LanguageContext";
 import { useTheme } from "../theme/ThemeContext";
 import { useGeolocation } from "../hooks/useGeolocation";
 import { getTileUrl, TILE_ATTRIBUTION } from "../config/mapTiles";
+import BrandLogo from "./BrandLogo";
 import { sanitizePhoneInput, normalizePHPhone, phoneProblem, PH_PHONE_LENGTH } from "../utils/phone";
 
 /**
@@ -776,7 +777,7 @@ export default function StoreRegistrationForm({ user, onComplete, onCancel }) {
     >
       {/* Page header */}
       <div className="regform__header" style={{ position: "relative" }}>
-        <Store size={28} />
+        <BrandLogo size={40} />
         <div>
           <h1 className="regform__title">{t("owner.registration.title")}</h1>
           <p className="regform__subtitle">{t("owner.registration.signedInAs", user.email)}</p>

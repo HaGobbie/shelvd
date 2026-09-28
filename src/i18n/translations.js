@@ -14,6 +14,26 @@
 
 export const translations = {
   en: {
+    logo: {
+      title: "Store logo", hasLogo: "Shown on the map and in your dashboard. Replacing it removes the old picture.",
+      noLogo: "Optional. Add your store's logo so neighbors recognize you. Any photo works — we shrink it automatically.",
+      upload: "Upload logo", replace: "Replace logo", remove: "Remove",
+      err: {
+        not_image: "That file isn't a picture. Choose a JPG, PNG or similar image.",
+        bad_image: "We couldn't read that picture. Try a different one.",
+        webp_unsupported: "This browser can't prepare the picture. Try Chrome, Edge or Firefox.",
+        too_large: "The picture is still too large. Try a smaller one.",
+        forbidden: "You don't have permission to change this store's logo.",
+        unauthorized: "Please sign in again and retry.",
+        generic: "Couldn't save the logo. Please try again in a moment.",
+      },
+    },
+    revenue: {
+      subtitle: "Sales by month and best sellers", chartAria: "Monthly sales chart, tap a bar to choose a month",
+      last12: "Last 12 months", yearTotal: (v) => `${v} in 12 months`, noSalesYet: "No sales recorded yet. Sales appear here after your first transaction.",
+      vsLast: "vs last month", noPrev: "No sales last month", prevWas: (v) => `Last month: ${v}`,
+      topProducts: "Top products", allTime: "All time", noTop: "No sales to rank yet.", units: (n) => `${n} sold`,
+    },
     phone: {
       hint: "Philippine mobile number, 11 digits (e.g. 09171234567)",
       invalid: "Enter a valid 11-digit mobile number starting with 09",
@@ -96,6 +116,7 @@ export const translations = {
       adjustBy: (n) => `Adjust stock by ${n}`,
       newQuantityAria: (name) => `New quantity for ${name}`,
       reset: "Reset",
+      adjustTitle: "Adjust stock",
       save: "Save",
       whyDown: (n) => `Why did stock go down by ${n}?`,
     },
@@ -117,7 +138,7 @@ export const translations = {
       nav: {
         main: "Main navigation", manage: "Manage", reportsGroup: "Reports", addMany: "Add many items",
         inventoryShort: "Inventory", add: "Add", reports: "Reports", alerts: "Alerts",
-        admin: "Admin console", viewMap: "View public map",
+        admin: "Admin console", viewMap: "View public map", ownerSpace: "Store owner",
       },
       filter: { all: "All" },
       add: {
@@ -133,6 +154,20 @@ export const translations = {
     },
     admin: {
       console: "Super admin console", dashboardLink: "My dashboard", refresh: "Refresh",
+      manage: "Manage", live: "Live", hidden: "Hidden",
+      liveHint: "Shown on the public map and searchable.", hiddenHint: "Not shown on the map. The owner can still sign in.",
+      addedOn: (d) => `Added ${d}`, productsN: (n) => `${n} product${Number(n) !== 1 ? "s" : ""}`,
+      madeLive: (n) => `${n} store${Number(n) !== 1 ? "s are" : " is"} now live.`,
+      deleteStoreBtn: "Delete this store", dangerBody: "Permanently deletes the store, its products, sales history and logo. This can't be undone.",
+      sec: { logo: "Logo", basics: "Store details", visibility: "Visibility", owner: "Owner account", location: "Location", danger: "Danger zone" },
+      att: {
+        title: "Needs attention", allGood: "Everything looks good", allGoodBody: "No hidden, unclaimed or empty stores.",
+        hiddenTitle: (n) => `${n} store${n !== 1 ? "s are" : " is"} hidden from the map`, hiddenBody: "Left over from the retired approval step. Make them live so neighbors can find them.",
+        makeLive: "Make all live",
+        unclaimedTitle: (n) => `${n} store${n !== 1 ? "s have" : " has"} no owner account`, unclaimedBody: "Assign an account so the owner can manage the store.",
+        review: "Review",
+        emptyTitle: (n) => `${n} store${n !== 1 ? "s have" : " has"} no products yet`, emptyBody: "Empty stores show nothing to shoppers. A reminder to the owner may help.",
+      },
       deniedTitle: "Access denied", deniedBody: "This area is for Shelvd super admins only.", backToDashboard: "Back to dashboard",
       tab: { overview: "Overview", stores: "Stores", accounts: "Accounts" },
       stat: { stores: "Stores", accounts: "Accounts", products: "Products", admins: "Super admins" },
@@ -145,6 +180,7 @@ export const translations = {
       lastAdmin: "You can't remove the last super admin.", cannotDeleteSelf: "You can't delete your own account.",
       unclaimedShort: "unclaimed", you: "You",
       f: {
+        store: "Store", unclaimedShort: "Unclaimed", noProducts: "No products",
         name: "Store name", type: "Type", ownerName: "Owner name", contact: "Contact number", address: "Address",
         accountSection: "Account & status", account: "Owner account", unclaimed: "— Unclaimed —", status: "Status",
         claimEmail: "Email allowed to claim this store", claimHint: "When someone signs up with this email, the store attaches to their account.",
@@ -588,6 +624,26 @@ export const translations = {
   },
 
   tl: {
+    logo: {
+      title: "Logo ng tindahan", hasLogo: "Makikita sa mapa at sa dashboard mo. Kapag pinalitan, mabubura ang lumang larawan.",
+      noLogo: "Opsyonal. Magdagdag ng logo para makilala ka ng mga kapitbahay. Kahit anong litrato — awtomatiko naming liliitan.",
+      upload: "Mag-upload ng logo", replace: "Palitan ang logo", remove: "Alisin",
+      err: {
+        not_image: "Hindi larawan ang file na iyan. Pumili ng JPG, PNG o katulad.",
+        bad_image: "Hindi mabasa ang larawan. Subukan ang iba.",
+        webp_unsupported: "Hindi ito maihanda ng browser na ito. Subukan ang Chrome, Edge o Firefox.",
+        too_large: "Masyado pa ring malaki ang larawan. Subukan ang mas maliit.",
+        forbidden: "Wala kang pahintulot na palitan ang logo ng tindahang ito.",
+        unauthorized: "Mag-sign in ulit at subukan muli.",
+        generic: "Hindi na-save ang logo. Subukan ulit mamaya.",
+      },
+    },
+    revenue: {
+      subtitle: "Benta kada buwan at pinakamabenta", chartAria: "Tsart ng buwanang benta, pindutin ang bar para pumili ng buwan",
+      last12: "Nakaraang 12 buwan", yearTotal: (v) => `${v} sa 12 buwan`, noSalesYet: "Wala pang naitalang benta. Lalabas dito pagkatapos ng unang transaksyon.",
+      vsLast: "kumpara sa nakaraang buwan", noPrev: "Walang benta noong nakaraang buwan", prevWas: (v) => `Nakaraang buwan: ${v}`,
+      topProducts: "Pinakamabentang produkto", allTime: "Lahat ng panahon", noTop: "Wala pang benta na mairarank.", units: (n) => `${n} ang nabenta`,
+    },
     phone: {
       hint: "Philippine mobile number, 11 digits (hal. 09171234567)",
       invalid: "Maglagay ng tamang 11-digit na mobile number na nagsisimula sa 09",
@@ -670,6 +726,7 @@ export const translations = {
       adjustBy: (n) => `Baguhin ang stock ng ${n}`,
       newQuantityAria: (name) => `Bagong dami ng ${name}`,
       reset: "I-reset",
+      adjustTitle: "Baguhin ang stock",
       save: "I-save",
       whyDown: (n) => `Bakit bumaba ng ${n} ang stock?`,
     },
@@ -691,7 +748,7 @@ export const translations = {
       nav: {
         main: "Pangunahing nabigasyon", manage: "Pamahalaan", reportsGroup: "Mga ulat", addMany: "Magdagdag ng marami",
         inventoryShort: "Paninda", add: "Idagdag", reports: "Ulat", alerts: "Babala",
-        admin: "Admin console", viewMap: "Tingnan ang mapa",
+        admin: "Admin console", viewMap: "Tingnan ang mapa", ownerSpace: "May-ari ng tindahan",
       },
       filter: { all: "Lahat" },
       add: {
@@ -707,6 +764,20 @@ export const translations = {
     },
     admin: {
       console: "Super admin console", dashboardLink: "Dashboard ko", refresh: "I-refresh",
+      manage: "Pamahalaan", live: "Live", hidden: "Nakatago",
+      liveHint: "Makikita sa mapa at mahahanap.", hiddenHint: "Hindi makikita sa mapa. Makakapag-sign in pa rin ang may-ari.",
+      addedOn: (d) => `Idinagdag noong ${d}`, productsN: (n) => `${n} produkto`,
+      madeLive: (n) => `${n} tindahan ang live na ngayon.`,
+      deleteStoreBtn: "Burahin ang tindahang ito", dangerBody: "Permanenteng buburahin ang tindahan, mga produkto, kasaysayan ng benta at logo. Hindi na ito mababawi.",
+      sec: { logo: "Logo", basics: "Detalye ng tindahan", visibility: "Visibility", owner: "Account ng may-ari", location: "Lokasyon", danger: "Delikadong bahagi" },
+      att: {
+        title: "Kailangan ng atensyon", allGood: "Maayos ang lahat", allGoodBody: "Walang nakatago, walang may-ari o walang lamang tindahan.",
+        hiddenTitle: (n) => `${n} tindahan ang nakatago sa mapa`, hiddenBody: "Naiwan mula sa dating approval. Gawing live para mahanap ng mga kapitbahay.",
+        makeLive: "Gawing live lahat",
+        unclaimedTitle: (n) => `${n} tindahan ang walang account ng may-ari`, unclaimedBody: "Mag-assign ng account para mapamahalaan ng may-ari ang tindahan.",
+        review: "Suriin",
+        emptyTitle: (n) => `${n} tindahan ang wala pang produkto`, emptyBody: "Walang makikita ang mamimili sa walang lamang tindahan. Makakatulong ang paalala sa may-ari.",
+      },
       deniedTitle: "Walang pahintulot", deniedBody: "Para lang sa mga super admin ng Shelvd ang bahaging ito.", backToDashboard: "Bumalik sa dashboard",
       tab: { overview: "Pangkalahatan", stores: "Mga tindahan", accounts: "Mga account" },
       stat: { stores: "Tindahan", accounts: "Account", products: "Produkto", admins: "Super admin" },
@@ -719,6 +790,7 @@ export const translations = {
       lastAdmin: "Hindi mo maaalis ang huling super admin.", cannotDeleteSelf: "Hindi mo mabubura ang sarili mong account.",
       unclaimedShort: "wala pang may-ari", you: "Ikaw",
       f: {
+        store: "Tindahan", unclaimedShort: "Walang may-ari", noProducts: "Walang produkto",
         name: "Pangalan ng tindahan", type: "Uri", ownerName: "Pangalan ng may-ari", contact: "Contact number", address: "Address",
         accountSection: "Account at katayuan", account: "Account ng may-ari", unclaimed: "— Wala pang may-ari —", status: "Katayuan",
         claimEmail: "Email na pwedeng mag-claim ng tindahan", claimHint: "Kapag nag-sign up ang taong may ganitong email, mapupunta sa account niya ang tindahan.",

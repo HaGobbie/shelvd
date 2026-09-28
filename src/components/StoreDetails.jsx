@@ -12,6 +12,7 @@ import { useLanguage } from "../i18n/LanguageContext";
 import { buildGoogleMapsViewLink } from "../utils/googleMapsLink";
 import { SERVICE_CATEGORY_EMOJI } from "../constants/productCategories";
 import { useShoppingList } from "../hooks/useShoppingList";
+import StoreAvatar from "./StoreAvatar";
 
 // ─── Status badge config ──────────────────────────────────────────────────────
 // Colors reference CSS custom properties (defined in :root, App.css)
@@ -324,7 +325,8 @@ export default function StoreDetails({ store, searchQuery = "", onClose }) {
 
             {/* Header */}
             <div className="sheet-header">
-              <div className="sheet-header__info">
+              <StoreAvatar name={store?.name ?? ""} logoUrl={store?.logoUrl} size={48} />
+              <div className="sheet-header__info" style={{ marginLeft: 12 }}>
                 <h2 className="sheet-header__name">{store?.name}</h2>
                 <span className="sheet-header__type">{store?.type}</span>
               </div>

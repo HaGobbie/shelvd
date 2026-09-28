@@ -35,6 +35,8 @@ import {
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useProfileRole } from "../hooks/useProfileRole";
 import AuthScreen from "../components/AuthScreen";
+import StoreAvatar from "../components/StoreAvatar";
+import { removeStoreLogo } from "../utils/storeLogo";
 import ProductCard from "../components/dashboard/ProductCard";
 import { Sidebar, BottomNav } from "../components/dashboard/DashNav";
 import { DailyCashOutCard, NeighborhoodDemandCard, StockAlertsCard } from "../components/dashboard/InsightCards";
@@ -68,6 +70,8 @@ function DeleteStoreConfirm({ isOpen, onClose, store, onDeleted }) {
     if (!store) return;
     setDeleting(true);
     setError("");
+    // Best effort: clear the logo file out of the repo first so it isn't orphaned.
+    if (store.logoUrl) { try { await removeStoreLogo(store.id); } catch (e) { console.warn("logo cleanup skipped:", e); } }
     const { error: deleteError } = await deleteStore(store.id);
     if (deleteError) {
       console.error("Delete store failed:", deleteError);
@@ -518,14 +522,14 @@ export default function OwnerDashboard({ session }) {
         <Sidebar
           view={sidebarView} addTab={addTab} onNavigate={navigate}
           onNewTransaction={() => setNewTransactionOpen(true)} canSell={inventory.length > 0}
-          isSuperAdmin={isSuperAdmin} storeName={myStore?.name ?? ""} alertCount={alertCount}
+          isSuperAdmin={isSuperAdmin} storeName={myStore?.name ?? ""} storeLogoUrl={myStore?.logoUrl} alertCount={alertCount}
         />
       )}
 
       <div className="dash__body">
         <header className="topbar">
           <div className="topbar__title">
-            {!isDesktop && <span className="topbar__logo"><Store size={18} /></span>}
+            <StoreAvatar name={myStore?.name ?? ""} logoUrl={myStore?.logoUrl} size={isDesktop ? 40 : 36} />
             <div style={{ minWidth: 0 }}>
               <h1>{myStore?.name ?? t("owner.dashboard.myStore")}</h1>
               <span>{myStore?.type ? `${myStore.type} · ` : ""}{user.email}</span>
