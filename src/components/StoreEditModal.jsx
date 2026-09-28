@@ -54,6 +54,7 @@ import { supabase } from "../config/supabaseClient";
 import { useLanguage } from "../i18n/LanguageContext";
 import { useTheme } from "../theme/ThemeContext";
 import { getTileUrl, TILE_ATTRIBUTION } from "../config/mapTiles";
+import { sanitizePhoneInput, normalizePHPhone, phoneProblem, PH_PHONE_LENGTH } from "../utils/phone";
 
 // ─── Leaflet icon fix ─────────────────────────────────────────────────────────
 delete L.Icon.Default.prototype._getIconUrl;
@@ -185,7 +186,7 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
       setName(store.name ?? "");
       setType(store.type ?? "");
       setOwnerName(store.ownerName ?? "");
-      setContactNumber(store.contactNumber ?? "");
+      setContactNumber(sanitizePhoneInput(normalizePHPhone(store.contactNumber ?? "")));
       setAddress(store.address ?? "");
       setLat(store.lat ?? null);
       setLng(store.lng ?? null);
@@ -215,7 +216,11 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
     if (!name.trim())          errs.name          = t("owner.storeEdit.nameRequired");
     if (!type)                 errs.type          = t("owner.storeEdit.typeRequired");
     if (!ownerName.trim())     errs.ownerName     = t("owner.storeEdit.ownerRequired");
-    if (!contactNumber.trim()) errs.contactNumber = t("owner.storeEdit.contactRequired");
+    {
+      const phoneIssue = phoneProblem(contactNumber);
+      if (phoneIssue === "empty")        errs.contactNumber = t("owner.storeEdit.contactRequired");
+      else if (phoneIssue === "invalid") errs.contactNumber = t("phone.invalid");
+    }
     if (lat === null || lng === null) errs.coords = t("owner.storeEdit.coordsRequired");
     if (!isValidUrl(facebookUrl))  errs.facebookUrl  = t("owner.storeEdit.invalidUrl");
     if (!isValidUrl(instagramUrl)) errs.instagramUrl = t("owner.storeEdit.invalidUrl");
@@ -280,7 +285,7 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
         name:           name.trim(),
         type,
         owner_name:     ownerName.trim(),
-        contact_number: contactNumber.trim(),
+        contact_number: normalizePHPhone(contactNumber),
         address:        address.trim(),
         // EWKT text — Postgres casts this to geography(Point, 4326) automatically.
         location:       `SRID=4326;POINT(${lng} ${lat})`,
@@ -440,9 +445,11 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
                       id="se-contact"
                       className={`pform__input ${errors.contactNumber ? "pform__input--error" : ""}`}
                       type="tel"
+                      inputMode="numeric"
+                      placeholder="09XXXXXXXXX"
                       value={contactNumber}
-                      onChange={(e) => { setContactNumber(e.target.value); setErrors((p) => ({ ...p, contactNumber: undefined })); }}
-                      maxLength={20}
+                      onChange={(e) => { setContactNumber(sanitizePhoneInput(e.target.value)); setErrors((p) => ({ ...p, contactNumber: undefined })); }}
+                      maxLength={PH_PHONE_LENGTH}
                     />
                     {errors.contactNumber && <span className="regform__field-error"><AlertTriangle size={12} /> {errors.contactNumber}</span>}
                   </div>
@@ -654,5 +661,7 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
     </AnimatePresence>
   );
 }
+
+
 
 

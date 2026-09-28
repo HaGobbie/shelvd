@@ -6,11 +6,12 @@
 
 import React, { useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, MapPin, Phone, Clock, Package, Navigation, ExternalLink } from "lucide-react";
+import { X, MapPin, Phone, Clock, Package, Navigation, ExternalLink, Plus, Check, ShoppingBasket } from "lucide-react";
 import { formatLastUpdated, formatPrice } from "../hooks/useStores";
 import { useLanguage } from "../i18n/LanguageContext";
 import { buildGoogleMapsViewLink } from "../utils/googleMapsLink";
 import { SERVICE_CATEGORY_EMOJI } from "../constants/productCategories";
+import { useShoppingList } from "../hooks/useShoppingList";
 
 // ─── Status badge config ──────────────────────────────────────────────────────
 // Colors reference CSS custom properties (defined in :root, App.css)
@@ -146,7 +147,42 @@ function StatusBadge({ status }) {
  * since "quantity: 999" or a price-per-unit doesn't mean much to a
  * resident checking whether the service itself is available right now.
  */
-function ProductRow({ product, searchQuery }) {
+/**
+ * AddToListButton — puts a product on the resident's shopping list.
+ * Disabled for anything that isn't in stock (nothing to walk over for).
+ */
+function AddToListButton({ product, store }) {
+  const { t } = useLanguage();
+  const { has, toggle } = useShoppingList();
+  const inList = has(product.id);
+  const unavailable = product.isService ? (product.quantity ?? 0) <= 0 : product.status === "out";
+  if (!store) return null;
+  return (
+    <button
+      type="button"
+      className={`product-row__add ${inList ? "product-row__add--on" : ""}`}
+      disabled={unavailable && !inList}
+      aria-pressed={inList}
+      aria-label={inList ? t("list.removeFromList", product.name) : t("list.addToList", product.name)}
+      title={inList ? t("list.removeFromList", product.name) : t("list.addToList", product.name)}
+      onClick={() =>
+        toggle({
+          productId: product.id,
+          name: product.name,
+          price: product.price,
+          storeId: store.id,
+          storeName: store.name,
+          lat: store.lat,
+          lng: store.lng,
+        })
+      }
+    >
+      {inList ? <Check size={16} strokeWidth={3} /> : <Plus size={16} strokeWidth={2.5} />}
+    </button>
+  );
+}
+
+function ProductRow({ product, searchQuery, store }) {
   const { t } = useLanguage();
   const isMatch =
     searchQuery.trim() &&
@@ -176,6 +212,7 @@ function ProductRow({ product, searchQuery }) {
               : t("storeDetails.serviceUnavailable", product.category)}
           </span>
         </div>
+        <AddToListButton product={product} store={store} />
       </div>
     );
   }
@@ -199,6 +236,7 @@ function ProductRow({ product, searchQuery }) {
           &nbsp;{formatLastUpdated(product.lastUpdated)}
         </span>
       </div>
+      <AddToListButton product={product} store={store} />
     </div>
   );
 }
@@ -219,6 +257,7 @@ function ProductRow({ product, searchQuery }) {
  */
 export default function StoreDetails({ store, searchQuery = "", onClose }) {
   const { t } = useLanguage();
+  const { pendingCount, setListOpen } = useShoppingList();
   const isOpen = Boolean(store);
 
   const handleOverlayClick = useCallback(
@@ -333,6 +372,18 @@ export default function StoreDetails({ store, searchQuery = "", onClose }) {
                 </a>
               )}
 
+              {pendingCount > 0 && (
+                <button
+                  type="button"
+                  className="sheet-meta__item"
+                  onClick={() => setListOpen(true)}
+                  style={{ color: "var(--color-brand-primary)", fontWeight: 700, background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}
+                >
+                  <ShoppingBasket size={14} />
+                  <span>{t("list.viewList", pendingCount)}</span>
+                </button>
+              )}
+
               {/* Owner-provided Google Maps link — a SEPARATE, optional
                   option alongside the directions link above, not a
                   replacement for it. Shelvd's own directions use the
@@ -416,6 +467,7 @@ export default function StoreDetails({ store, searchQuery = "", onClose }) {
                     key={product.id}
                     product={product}
                     searchQuery={searchQuery}
+                    store={store}
                   />
                 ))}
               </div>
@@ -426,5 +478,7 @@ export default function StoreDetails({ store, searchQuery = "", onClose }) {
     </AnimatePresence>
   );
 }
+
+
 
 

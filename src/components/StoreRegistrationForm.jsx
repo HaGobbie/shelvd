@@ -56,6 +56,7 @@ import { useLanguage } from "../i18n/LanguageContext";
 import { useTheme } from "../theme/ThemeContext";
 import { useGeolocation } from "../hooks/useGeolocation";
 import { getTileUrl, TILE_ATTRIBUTION } from "../config/mapTiles";
+import { sanitizePhoneInput, normalizePHPhone, phoneProblem, PH_PHONE_LENGTH } from "../utils/phone";
 
 /**
  * deriveOwnerNameFromUser
@@ -239,12 +240,35 @@ function StepStoreDetails({ data, onChange, errors, t }) {
           id="reg-contact"
           className={`pform__input ${errors.contactNumber ? "pform__input--error" : ""}`}
           type="tel"
-          placeholder={t("owner.registration.contactPlaceholder")}
+          inputMode="numeric"
+          autoComplete="tel-national"
+          placeholder="09XXXXXXXXX"
           value={data.contactNumber}
-          onChange={(e) => onChange("contactNumber", e.target.value)}
-          maxLength={20}
+          onChange={(e) => onChange("contactNumber", sanitizePhoneInput(e.target.value))}
+          maxLength={PH_PHONE_LENGTH}
         />
+        <span className="auth-hint">{t("phone.hint")}</span>
         {errors.contactNumber && <span className="regform__field-error">{errors.contactNumber}</span>}
+      </div>
+
+      {/* Written address — the GPS pin in the next step only stores
+          coordinates, so this is where the actual street address is
+          captured. It's what residents see under the store name. */}
+      <div className="regform__field">
+        <label className="regform__label" htmlFor="reg-address-text">
+          {t("owner.registration.addressLabel")} <span className="pform__required">*</span>
+        </label>
+        <textarea
+          id="reg-address-text"
+          className={`pform__input ${errors.address ? "pform__input--error" : ""}`}
+          style={{ minHeight: 72, resize: "vertical", fontFamily: "inherit" }}
+          placeholder={t("owner.registration.addressTextPlaceholder")}
+          value={data.address}
+          onChange={(e) => onChange("address", e.target.value)}
+          maxLength={200}
+          rows={2}
+        />
+        {errors.address && <span className="regform__field-error">{errors.address}</span>}
       </div>
     </div>
   );
@@ -330,7 +354,9 @@ function StepGISLocation({ data, onChange, errors, t, theme }) {
       const newLng = parseFloat(lon);
       onChange("lat", newLat);
       onChange("lng", newLng);
-      onChange("address", searchQuery.trim());
+      // NOTE: deliberately NOT overwriting data.address here — the written
+      // address typed in Step 1 is the source of truth; this search only
+      // moves the map pin.
       setFlyTarget([newLat, newLng]);
     } catch {
       setGeocodeError(t("owner.registration.geocodeFailed"));
@@ -660,7 +686,10 @@ export default function StoreRegistrationForm({ user, onComplete, onCancel }) {
     if (targetStep >= 1) {
       if (!data.name.trim())          errs.name         = t("owner.registration.nameRequired");
       if (!data.type)                 errs.type         = t("owner.registration.typeRequired");
-      if (!data.contactNumber.trim()) errs.contactNumber = t("owner.registration.contactRequired");
+      const phoneIssue = phoneProblem(data.contactNumber);
+      if (phoneIssue === "empty")        errs.contactNumber = t("owner.registration.contactRequired");
+      else if (phoneIssue === "invalid") errs.contactNumber = t("phone.invalid");
+      if (data.address.trim().length < 5) errs.address = t("owner.registration.addressRequired");
     }
     if (targetStep >= 2) {
       if (!data.confirmed || data.lat === null || data.lng === null)
@@ -708,7 +737,7 @@ export default function StoreRegistrationForm({ user, onComplete, onCancel }) {
       name:           data.name.trim(),
       type:           data.type,
       owner_name:     data.ownerName.trim(),
-      contact_number: data.contactNumber.trim(),
+      contact_number: normalizePHPhone(data.contactNumber),
       address:        data.address.trim(),
       // EWKT text -> geography(Point, 4326); latitude/longitude are generated
       location:       `SRID=4326;POINT(${data.lng} ${data.lat})`,
@@ -855,5 +884,7 @@ export default function StoreRegistrationForm({ user, onComplete, onCancel }) {
     </div>
   );
 }
+
+
 
 

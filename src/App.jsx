@@ -14,12 +14,17 @@
 //      instead of running its own separate getSession() round trip.
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { Store, Languages, Sun, Moon, HelpCircle, WifiOff } from "lucide-react";
+import { Store, Languages, Sun, Moon, HelpCircle, WifiOff, ShoppingBasket } from "lucide-react";
 
 import MapContainer from "./components/MapContainer";
 import SearchBar from "./components/SearchBar";
 import StoreDetails from "./components/StoreDetails";
 import OwnerDashboard from "./pages/OwnerDashboard";
+import AdminDashboard from "./pages/AdminDashboard";
+import { ResetPasswordScreen } from "./components/AuthScreen";
+import ShoppingListSheet from "./components/ShoppingListSheet";
+import RoutePlanner from "./components/RoutePlanner";
+import { ShoppingListProvider, useShoppingList } from "./hooks/useShoppingList";
 import { useMapMarkers, useStoreDetails, useDebouncedSearchMatches } from "./hooks/useStores";
 import { useOnlineStatus } from "./hooks/useOnlineStatus";
 import { supabase } from "./config/supabaseClient";
@@ -30,6 +35,7 @@ import OnboardingTour, { hasSeenTour } from "./components/OnboardingTour";
 import { MAP_TOUR_STEPS, MAP_TOUR_STORAGE_KEY } from "./tours/mapTourSteps";
 
 import "./styles/App.css";
+import "./styles/shelvd-v2.css";
 
 // ─── OAuth hash sanitizer ─────────────────────────────────────────────────
 // Runs ONCE, at module load — before the App component ever renders, and
@@ -72,6 +78,12 @@ if (
 // entirely — the redirect decision no longer depends on the hash still
 // being intact later.
 const HAD_OAUTH_HASH_ON_LOAD = window.location.hash.includes("access_token");
+
+// Same idea for password-reset emails: their link arrives as
+// "#access_token=...&type=recovery". Captured up front so we can show the
+// "choose a new password" screen even if Supabase's PASSWORD_RECOVERY event
+// fires before our listener is attached.
+const HAD_RECOVERY_ON_LOAD = window.location.hash.includes("type=recovery");
 
 /**
  * Tiny hash-router — no external routing library needed for Phase A.
@@ -125,6 +137,7 @@ function AppShell() {
   const { language, setLanguage, t } = useLanguage();
   const { theme, toggleTheme } = useTheme();
   const isOnline = useOnlineStatus();
+  const { pendingCount, setListOpen } = useShoppingList();
 
   // ─── Global Supabase auth session ────────────────────────────────────────
   const [session, setSession] = useState(null);
@@ -139,6 +152,8 @@ function AppShell() {
   // re-trigger navigation logic. Using a ref rather than state since this
   // doesn't need to cause a re-render.
   const oauthHandledRef = useRef(false);
+  // True while the person is choosing a new password after a reset email.
+  const [recoveryMode, setRecoveryMode] = useState(HAD_RECOVERY_ON_LOAD);
 
   /**
    * If a session just came in AND this page load genuinely started as an
@@ -205,6 +220,7 @@ function AppShell() {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, newSession) => {
       console.log("[auth]", event, newSession ? `session for ${newSession.user?.email}` : "no session");
+      if (event === "PASSWORD_RECOVERY") setRecoveryMode(true);
       setSession(newSession);
       setAuthLoading(false);
       redirectFromOAuthHashIfNeeded(newSession);
@@ -329,6 +345,29 @@ function AppShell() {
     );
   }
 
+  // ─── Password reset (from the emailed link) ─────────────────────────────
+  if (recoveryMode && session) {
+    return (
+      <ResetPasswordScreen
+        onDone={() => {
+          setRecoveryMode(false);
+          window.location.hash = "/dashboard";
+          setRoute("#/dashboard");
+        }}
+      />
+    );
+  }
+
+  // ─── Super Admin route ──────────────────────────────────────────────────
+  if (route === "#/admin") {
+    return (
+      <div className="app-container" style={{ position: "static", height: "auto", minHeight: "100dvh", overflow: "visible" }}>
+        {!isOnline && <OfflineBanner />}
+        <AdminDashboard session={session} />
+      </div>
+    );
+  }
+
   // ─── Owner Dashboard route ──────────────────────────────────────────────
   if (route === "#/dashboard") {
     return (
@@ -350,35 +389,8 @@ function AppShell() {
       >
         {!isOnline && <OfflineBanner />}
         <OwnerDashboard session={session} />
-        {/* Nav back to map. z-index deliberately kept well below every
-            modal/sheet overlay in the app (the lowest of which is 1000,
-            in ProductFormModal/StoreEditModal; OnboardingTour goes up to
-            2003) — this used to sit at 9999, ABOVE all of them, which
-            let it show through and stay clickable over any open popup,
-            especially in the same bottom-right corner on mobile where
-            several sheets' primary actions also live. */}
-        <a
-          href="#/"
-          style={{
-            position: "fixed",
-            bottom: "calc(24px + env(safe-area-inset-bottom, 0px))",
-            right: 20,
-            zIndex: 50,
-            background: "var(--color-brand-primary)",
-            color: "#fff",
-            padding: "10px 18px",
-            borderRadius: "var(--radius-pill)",
-            fontSize: 13,
-            fontWeight: 700,
-            boxShadow: "var(--shadow-lg)",
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            textDecoration: "none",
-          }}
-        >
-          ← Back to Map
-        </a>
+        {/* "Back to map" now lives in the dashboard sidebar / account menu
+            (the old floating button collided with the mobile bottom nav). */}
       </div>
     );
   }
@@ -422,6 +434,37 @@ function AppShell() {
         searchQuery={searchQuery}
         onClose={handleSheetClose}
       />
+
+      {/* Shopping list FAB — stacked just above the store-owner FAB */}
+      <button
+        type="button"
+        data-tour-id="map-list-fab"
+        onClick={() => setListOpen(true)}
+        aria-label={t("list.title")}
+        title={t("list.title")}
+        style={{
+          position: "fixed",
+          bottom: "calc(24px + 64px + env(safe-area-inset-bottom, 0px))",
+          right: 20,
+          zIndex: 800,
+          background: "var(--color-surface)",
+          color: "var(--color-brand-primary)",
+          width: 52,
+          height: 52,
+          borderRadius: "50%",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          boxShadow: "var(--shadow-lg)",
+          border: "none",
+          cursor: "pointer",
+        }}
+      >
+        <ShoppingBasket size={22} />
+        {pendingCount > 0 && <span className="fab-badge">{pendingCount > 99 ? "99+" : pendingCount}</span>}
+      </button>
+      <ShoppingListSheet />
+      <RoutePlanner />
 
       {/* Owner Dashboard shortcut FAB */}
       <a
@@ -568,11 +611,15 @@ export default function App() {
     <ErrorBoundary>
       <ThemeProvider>
         <LanguageProvider>
-          <AppShell />
+          <ShoppingListProvider>
+            <AppShell />
+          </ShoppingListProvider>
         </LanguageProvider>
       </ThemeProvider>
     </ErrorBoundary>
   );
 }
+
+
 
 

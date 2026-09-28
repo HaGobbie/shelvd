@@ -1,60 +1,43 @@
 // src/pages/OwnerDashboard.jsx
-// Full Owner Dashboard — includes:
-//   ✅ Google Sign-In + Email/Password login (Supabase Auth)
-//   ✅ Auto-routing: no stores found → StoreRegistrationForm
-//   ✅ MULTI-STORE support: switch between stores, add/delete a store
-//   ✅ FRICTIONLESS: no more barangay-approval gate. Stores are approved
-//      immediately on registration (see StoreRegistrationForm.jsx and
-//      sql/021_frictionless_registration_and_services.sql) — the old
-//      non-blocking ApprovalBanner and its pending/rejected copy are
-//      gone since there's nothing left for them to report.
-//   ✅ Real-time Inventory listener (Supabase Realtime, scoped to store)
-//   ✅ Add, Edit, Delete products; quantity quick-adjust (or a 1-tap
-//      Available/Unavailable switch for service products — is_service)
-//   ✅ Neighborhood Demand + Daily Cash-Out metric cards for immediate,
-//      no-setup value on day one
-//   ✅ Full Tagalog translation via useLanguage()/t()
+// Owner Dashboard — v2 layout.
 //
-// STATUS AUTOMATION: the old StatusRadioGroup quick-toggle is GONE. It
-// let an owner set `status` directly, which would have silently
-// conflicted with sync_status_from_quantity() (17_status_automation_and_
-// search_price.sql) — that trigger derives status from quantity/
-// threshold on every write, so a stray direct status write would just
-// get overwritten the next time quantity changed anyway, creating a
-// confusing "why didn't my status stick" experience. Replaced with a
-// QuantityStepper that adjusts the real source of truth directly.
+// DESKTOP (≥ 1100px): left sidebar (navigation) │ main work area │ right rail
+//   (Daily Cash-Out, Neighborhood Demand, Stock Alerts). "New transaction"
+//   stays at the front — pinned at the top of the sidebar.
+// MOBILE / TABLET:   compact top bar, one view at a time, and a bottom
+//   navigation bar: Inventory │ Add │ (New transaction) │ Reports │ Alerts.
+//
+// Views:
+//   inventory  – product list, filters, cash-out/demand summary (mobile)
+//   add        – Single product │ Add many items (receipt scan / CSV) — both
+//                render inline in the page instead of as pop-up sheets
+//   csv / today / monthly – reports (mobile groups these under "Reports")
+//   alerts     – low/out-of-stock warnings (mobile; desktop shows them in the rail)
+//
+// The existing modals (ProductFormModal, BulkImportModal, DailyTransactionsModal,
+// MonthlyRevenueModal) are reused as-is: wrapped in `.inline-host`, whose CSS
+// (shelvd-v2.css) turns their sheet chrome into a normal page section.
+//
+// Stock editing: see components/dashboard/StockAdjuster.jsx (batched + Save).
+// Auth screens: see components/AuthScreen.jsx.
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  PackageCheck,
-  AlertTriangle,
-  PackageX,
-  CheckCircle2,
-  LogIn,
-  Store,
-  Clock,
-  Package,
-  Plus,
-  Minus,
-  Pencil,
-  Trash2,
-  Settings,
-  ChevronDown,
-  X,
-  UploadCloud,
-  ShoppingCart,
-  FileDown,
-  Languages,
-  Sun,
-  Moon,
-  HelpCircle,
-  MoreVertical,
-  Users,
-  Wallet,
+  AlertTriangle, Package, Plus, Pencil, Trash2, Settings, ChevronDown, X, ShoppingCart,
+  FileDown, Languages, Sun, Moon, HelpCircle, MoreVertical, Store, Shield, Map as MapIcon,
+  PackagePlus, UploadCloud, Search, LogOut,
 } from "lucide-react";
 import { supabase } from "../config/supabaseClient";
-import { useMyStores, useOwnerInventory, deleteStore, formatLastUpdated, formatPrice, recordStockAdjustment, fetchNeighborhoodDemandItems, fetchDailyTransactions } from "../hooks/useStores";
+import {
+  useMyStores, useOwnerInventory, deleteStore, formatPrice, recordStockAdjustment,
+} from "../hooks/useStores";
+import { useMediaQuery } from "../hooks/useMediaQuery";
+import { useProfileRole } from "../hooks/useProfileRole";
+import AuthScreen from "../components/AuthScreen";
+import ProductCard from "../components/dashboard/ProductCard";
+import { Sidebar, BottomNav } from "../components/dashboard/DashNav";
+import { DailyCashOutCard, NeighborhoodDemandCard, StockAlertsCard } from "../components/dashboard/InsightCards";
 import ProductFormModal from "../components/ProductFormModal";
 import ConfirmDeleteModal from "../components/ConfirmDeleteModal";
 import StoreRegistrationForm from "../components/StoreRegistrationForm";
@@ -72,651 +55,10 @@ import { exportCurrentInventoryCSV } from "../utils/csvExport";
 import { useLanguage } from "../i18n/LanguageContext";
 import { useTheme } from "../theme/ThemeContext";
 
-// Colors reference CSS custom properties rather than literal hex — see
-// root-tokens-patch.css from the rebrand pass. Labels come from the
-// `status.*` dictionary entries shared with the public-facing badges.
-// Still used for the READ-ONLY status pill display — just no longer for
-// an interactive status picker.
-const STATUS_CONFIG = {
-  available: { Icon: PackageCheck, color: "var(--color-available)" },
-  low:       { Icon: AlertTriangle, color: "var(--color-low)" },
-  out:       { Icon: PackageX,     color: "var(--color-out)" },
-};
-
-// "Paubos List" ordering — an owner scanning their physical shelf
-// notices the empty spots first, not whatever happens to come first
-// alphabetically. Lower number = shown first. Anything with an
-// unrecognized status (shouldn't happen, but defensive) sorts last.
 const STATUS_SEVERITY = { out: 0, low: 1, available: 2 };
+const DESKTOP_QUERY = "(min-width: 1100px)";
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
-
-// Options for "why did stock go down" — same three reasons as
-// ProductFormModal's decrease prompt, duplicated here rather than
-// imported since it's a 3-item array, not worth a shared module for.
-const DECREASE_REASONS = [
-  { value: "spoiled", labelKey: "transactionType.spoiled" },
-  { value: "personal_use", labelKey: "transactionType.personal_use" },
-  { value: "other", labelKey: "transactionType.other" },
-];
-
-/**
- * QuantityStepper
- * Every quantity change here goes through the ledger — this was NOT
- * always true: a bug had this component calling a plain
- * `.update({quantity})` with no transaction logged and no reason asked
- * for decreases. Fixed by requiring `onChange` to always receive a
- * transaction type: '+' commits immediately as 'restocked'; '-' shows an
- * inline reason picker FIRST and only commits once one is chosen.
- */
-function QuantityStepper({ product, onChange }) {
-  const { t } = useLanguage();
-  const [pending, setPending] = useState(false);
-  const [pickingReason, setPickingReason] = useState(false);
-
-  const commitIncrease = async () => {
-    setPending(true);
-    await onChange(product.id, (product.quantity ?? 0) + 1, "restocked", null);
-    setPending(false);
-  };
-
-  const commitDecrease = async (reason) => {
-    setPending(true);
-    setPickingReason(false);
-    await onChange(product.id, Math.max(0, (product.quantity ?? 0) - 1), reason, null);
-    setPending(false);
-  };
-
-  if (pickingReason) {
-    return (
-      <div style={{ marginTop: 8 }}>
-        <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 6 }}>
-          {t("owner.dashboard.whyStockDown")}
-        </p>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {DECREASE_REASONS.map(({ value, labelKey }) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => commitDecrease(value)}
-              disabled={pending}
-              style={{
-                minHeight: 44, padding: "0 16px", borderRadius: "var(--radius-pill, 999px)",
-                border: "1px solid var(--color-border)", background: "var(--color-surface)",
-                fontSize: 13, fontWeight: 600, cursor: "pointer",
-              }}
-            >
-              {t(labelKey)}
-            </button>
-          ))}
-          <button
-            type="button"
-            onClick={() => setPickingReason(false)}
-            disabled={pending}
-            style={{
-              minHeight: 44, padding: "0 16px", borderRadius: "var(--radius-pill, 999px)",
-              border: "none", background: "none",
-              fontSize: 13, fontWeight: 600, color: "var(--color-text-muted)", cursor: "pointer",
-            }}
-          >
-            {t("owner.dashboard.cancel")}
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 8 }}>
-      <button
-        type="button"
-        onClick={() => setPickingReason(true)}
-        disabled={pending || (product.quantity ?? 0) <= 0}
-        aria-label={t("owner.dashboard.quickAdjustAria")}
-        style={{
-          width: 32, height: 32, borderRadius: "50%",
-          border: "1px solid var(--color-border)", background: "var(--color-surface)",
-          display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
-        }}
-      >
-        <Minus size={14} />
-      </button>
-      <span style={{ minWidth: 40, textAlign: "center", fontWeight: 700, fontSize: 15 }}>
-        {product.quantity ?? 0}
-      </span>
-      <button
-        type="button"
-        onClick={commitIncrease}
-        disabled={pending}
-        aria-label={t("owner.dashboard.quickAdjustAria")}
-        style={{
-          width: 32, height: 32, borderRadius: "50%",
-          border: "1px solid var(--color-border)", background: "var(--color-surface)",
-          display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
-        }}
-      >
-        <Plus size={14} />
-      </button>
-      <span style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
-        {(product.unit || "piece")} {t("owner.dashboard.stockLabel")}
-      </span>
-    </div>
-  );
-}
-
-/**
- * ServiceAvailabilityToggle
- * The service-product equivalent of QuantityStepper — a service (Water
- * Refill, E-Load, LPG / Cooking Gas, Ice — is_service) doesn't have a
- * meaningful stock count, so this renders a single 1-tap Available/
- * Unavailable switch instead of +/- buttons. Maps straight to quantity
- * 999/0 (see ProductFormModal.jsx header for why that's enough — the
- * existing status-derivation trigger handles the rest). Skips the
- * decrease-reason prompt entirely, same reasoning as the form modal:
- * there's no spoilage/personal-use concept for a service going dark.
- */
-function ServiceAvailabilityToggle({ product, onChange }) {
-  const { t } = useLanguage();
-  const [pending, setPending] = useState(false);
-  const isAvailable = (product.quantity ?? 0) > 0;
-
-  const handleToggle = async (nextAvailable) => {
-    if (nextAvailable === isAvailable || pending) return;
-    setPending(true);
-    await onChange(
-      product.id,
-      nextAvailable ? 999 : 0,
-      nextAvailable ? "restocked" : "other",
-      nextAvailable ? null : "Marked unavailable"
-    );
-    setPending(false);
-  };
-
-  return (
-    <div style={{ display: "flex", borderRadius: "var(--radius-pill, 999px)", overflow: "hidden", border: "1.5px solid var(--color-border)", marginTop: 8 }}>
-      <button
-        type="button"
-        onClick={() => handleToggle(true)}
-        disabled={pending}
-        aria-pressed={isAvailable}
-        style={{
-          flex: 1, minHeight: 40, border: "none", cursor: "pointer",
-          fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center",
-          justifyContent: "center", gap: 6,
-          background: isAvailable ? "var(--color-available)" : "var(--color-surface)",
-          color: isAvailable ? "#fff" : "var(--color-text-secondary)",
-        }}
-      >
-        <PackageCheck size={14} /> {t("owner.product.markAvailable")}
-      </button>
-      <button
-        type="button"
-        onClick={() => handleToggle(false)}
-        disabled={pending}
-        aria-pressed={!isAvailable}
-        style={{
-          flex: 1, minHeight: 40, border: "none", cursor: "pointer",
-          fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center",
-          justifyContent: "center", gap: 6,
-          background: !isAvailable ? "var(--color-out)" : "var(--color-surface)",
-          color: !isAvailable ? "#fff" : "var(--color-text-secondary)",
-        }}
-      >
-        <PackageX size={14} /> {t("owner.product.markUnavailable")}
-      </button>
-    </div>
-  );
-}
-
-// Units where "15 packs" reads naturally with a trailing "s"; metric
-// units (kg, g, liter, ml) don't pluralize the same way in everyday use,
-// so they're deliberately left alone. (Tagalog doesn't pluralize nouns
-// with a suffix at all, so this only applies in English.)
-const PLURALIZABLE_UNITS = new Set(["piece", "pack", "box", "sack", "bottle"]);
-
-function formatStockLine(quantity, unit, language) {
-  const qty = quantity ?? 0;
-  const u = (unit || "piece").trim();
-  if (language === "tl") return `${qty} ${u}`;
-  const displayUnit =
-    PLURALIZABLE_UNITS.has(u.toLowerCase()) && qty !== 1 ? `${u}s` : u;
-  return `${qty} ${displayUnit}`;
-}
-
-function ProductCard({ product, onQuantityChange, onEdit, onDelete, onSell, tourId }) {
-  const { t, language } = useLanguage();
-  const [expanded, setExpanded] = useState(false);
-  const [localSaved, setLocalSaved] = useState(false);
-  const cfg = STATUS_CONFIG[product.status] ?? STATUS_CONFIG.available;
-
-  const handleQuantityChange = async (pid, newQuantity, transactionType, notes) => {
-    await onQuantityChange(pid, newQuantity, transactionType, notes);
-    setLocalSaved(true);
-    setTimeout(() => setLocalSaved(false), 1800);
-  };
-
-  const stockLine = product.isService
-    ? ((product.quantity ?? 0) > 0 ? t("owner.product.markAvailable") : t("owner.product.markUnavailable"))
-    : formatStockLine(product.quantity, product.unit, language);
-
-  return (
-    <motion.div className="product-card" data-tour-id={tourId} layout
-      initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.97 }} transition={{ duration: 0.22 }}>
-      <div className="product-card__header-row">
-        <button className="product-card__header" style={{ flex: 1 }}
-          onClick={() => setExpanded(v => !v)} type="button" aria-expanded={expanded}>
-          <div className="product-card__info">
-            <span className="product-card__name">{product.name}</span>
-            <span className="product-card__category">
-              {product.category} · <strong style={{ color: "var(--color-text-primary)" }}>{formatPrice(product.price)}</strong>
-            </span>
-            <span className="product-card__stock-line" style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
-              {stockLine}
-            </span>
-          </div>
-          <div className="product-card__right">
-            {localSaved
-              ? <span className="product-card__saved"><CheckCircle2 size={14} /> {t("owner.dashboard.saved")}</span>
-              : <span className="product-card__status-pill" style={{ color: cfg.color, borderColor: cfg.color }}>{t(`status.${product.status}`)}</span>}
-            <span className={`product-card__chevron ${expanded ? "product-card__chevron--open" : ""}`}>▾</span>
-          </div>
-        </button>
-        <div className="product-card__actions">
-          {!product.isService && (
-            <button type="button" className="product-card__action-btn product-card__action-btn--sell"
-              onClick={() => onSell(product)} disabled={(product.quantity ?? 0) <= 0}
-              aria-label={t("owner.sell.sellAria", product.name)}
-              title={(product.quantity ?? 0) <= 0 ? t("status.out") : t("owner.sell.sellAria", product.name)}>
-              <ShoppingCart size={15} strokeWidth={2} />
-            </button>
-          )}
-          <button type="button" className="product-card__action-btn product-card__action-btn--edit"
-            onClick={() => onEdit(product)} aria-label={t("owner.dashboard.editAria", product.name)} title={t("owner.dashboard.edit")}>
-            <Pencil size={15} strokeWidth={2} />
-          </button>
-          <button type="button" className="product-card__action-btn product-card__action-btn--delete"
-            onClick={() => onDelete(product)} aria-label={t("owner.dashboard.deleteAria", product.name)} title={t("owner.dashboard.delete")}>
-            <Trash2 size={15} strokeWidth={2} />
-          </button>
-        </div>
-      </div>
-      <AnimatePresence initial={false}>
-        {expanded && (
-          <motion.div className="product-card__body"
-            initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.22 }}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 4 }}>
-              <div className="product-card__timestamp">
-                <Clock size={12} />&nbsp;{formatLastUpdated(product.lastUpdated)}
-              </div>
-              {product.sku && (
-                <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
-                  SKU: {product.sku}
-                </div>
-              )}
-              {product.description && (
-                <p
-                  style={{
-                    fontSize: 13,
-                    color: "var(--color-text-secondary)",
-                    lineHeight: 1.6,
-                    margin: 0,
-                    padding: "8px 10px",
-                    background: "var(--color-surface-3)",
-                    borderRadius: 8,
-                    borderLeft: "3px solid var(--color-border)",
-                    wordBreak: "break-word",
-                  }}
-                >
-                  {product.description}
-                </p>
-              )}
-            </div>
-            {product.isService
-              ? <ServiceAvailabilityToggle product={product} onChange={handleQuantityChange} />
-              : <QuantityStepper product={product} onChange={handleQuantityChange} />}
-            </motion.div>
-        )}
-      </AnimatePresence>
-    </motion.div>
-  );
-}
-
-// ─── Login screen with Google + Email (Supabase Auth) ────────────────────────
-function LoginScreen() {
-  const { t, language, setLanguage } = useLanguage();
-  const { theme, toggleTheme } = useTheme();
-  const [showEmailForm, setShowEmailForm] = useState(false);
-  const [email, setEmail]         = useState("");
-  const [password, setPassword]   = useState("");
-  const [error, setError]         = useState("");
-  const [loading, setLoading]     = useState(false);
-  const [gLoading, setGLoading]   = useState(false);
-  const [fbLoading, setFbLoading] = useState(false);
-
-  const handleGoogle = async () => {
-    setError(""); setGLoading(true);
-    const { error: oauthError } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: { redirectTo: window.location.origin + window.location.pathname },
-    });
-    if (oauthError) {
-      setError(t("owner.login.googleFailed"));
-      setGLoading(false);
-    }
-  };
-
-  // Requires Facebook enabled as a provider in Supabase Auth settings,
-  // which in turn requires a Facebook Developer App (App ID + App
-  // Secret) with a Valid OAuth Redirect URI pointing at your Supabase
-  // project's callback URL — this is account/dashboard setup on both
-  // Facebook's and Supabase's side, not something this code can do for
-  // you. Until that's configured, clicking this button will fail with
-  // an error from Supabase saying the provider isn't enabled.
-  const handleFacebook = async () => {
-    setError(""); setFbLoading(true);
-    const { error: oauthError } = await supabase.auth.signInWithOAuth({
-      provider: "facebook",
-      options: { redirectTo: window.location.origin + window.location.pathname },
-    });
-    if (oauthError) {
-      setError(t("owner.login.facebookFailed"));
-      setFbLoading(false);
-    }
-  };
-
-  const handleEmail = async (e) => {
-    e.preventDefault(); setError(""); setLoading(true);
-    const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
-    if (signInError) {
-      if (signInError.message.toLowerCase().includes("invalid login credentials")) {
-        setError(t("owner.login.incorrectCreds"));
-      } else if (signInError.message.toLowerCase().includes("rate limit")) {
-        setError(t("owner.login.rateLimited"));
-      } else {
-        setError(t("owner.login.signInFailed"));
-      }
-    }
-    setLoading(false);
-  };
-
-  return (
-    <div className="login-screen" style={{ position: "relative" }}>
-      <button
-        type="button"
-        onClick={() => setLanguage(language === "en" ? "tl" : "en")}
-        aria-label={t("common.language")}
-        title={t("common.language")}
-        style={{
-          position: "absolute", top: "calc(16px + env(safe-area-inset-top, 0px))", right: 16,
-          zIndex: 10, display: "flex", alignItems: "center", gap: 6,
-          height: 36, padding: "0 12px", borderRadius: "var(--radius-pill, 999px)",
-          background: "rgba(255,255,255,0.1)", color: "#fff", border: "none",
-          fontSize: 12, fontWeight: 700, cursor: "pointer",
-        }}
-      >
-        <Languages size={14} strokeWidth={2.2} />
-        {language === "en" ? "TL" : "EN"}
-      </button>
-
-      <button
-        type="button"
-        onClick={toggleTheme}
-        aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-        title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-        style={{
-          position: "absolute", top: "calc(60px + env(safe-area-inset-top, 0px))", right: 16,
-          zIndex: 10, width: 36, height: 36, borderRadius: "50%",
-          background: "rgba(255,255,255,0.1)", color: "#fff", border: "none",
-          display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
-        }}
-      >
-        {theme === "dark" ? <Sun size={15} strokeWidth={2.2} /> : <Moon size={15} strokeWidth={2.2} />}
-      </button>
-
-      <div className="login-card">
-        <div className="login-card__logo"><Store size={36} /></div>
-        <h1 className="login-card__title">{t("owner.login.title")}</h1>
-        <p className="login-card__subtitle">{t("owner.login.subtitle")}</p>
-
-        {/* Google button — brand colors below are Google's own official
-            colors and must stay exactly as-is per Google's brand guidelines. */}
-        <button type="button" className="google-signin-btn" onClick={handleGoogle} disabled={gLoading || loading || fbLoading}>
-          {gLoading
-            ? <span className="map-loading-spinner" style={{ width: 20, height: 20, borderWidth: 2.5, borderTopColor: "#4285F4" }} />
-            : (
-              <svg width="20" height="20" viewBox="0 0 48 48" aria-hidden="true">
-                <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
-                <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
-                <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
-                <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
-              </svg>
-            )}
-          {gLoading ? t("owner.login.signingIn") : t("owner.login.continueGoogle")}
-        </button>
-
-        {/* Facebook button — #1877F2 is Facebook's own official brand
-            blue, kept exact per their brand guidelines, same treatment
-            as Google's colors above. */}
-        <button
-          type="button"
-          onClick={handleFacebook}
-          disabled={gLoading || loading || fbLoading}
-          style={{
-            display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
-            width: "100%", height: 46, marginTop: 10, borderRadius: 10,
-            background: "#1877F2", color: "#fff", border: "none",
-            fontSize: 14, fontWeight: 700, cursor: "pointer",
-          }}
-        >
-          {fbLoading
-            ? <span className="map-loading-spinner" style={{ width: 20, height: 20, borderWidth: 2.5, borderTopColor: "#fff" }} />
-            : (
-              <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" fill="#fff">
-                <path d="M22 12.06C22 6.5 17.52 2 12 2S2 6.5 2 12.06c0 5.02 3.66 9.18 8.44 9.94v-7.03H7.9v-2.91h2.54V9.85c0-2.51 1.49-3.9 3.77-3.9 1.09 0 2.24.2 2.24.2v2.46h-1.26c-1.24 0-1.63.77-1.63 1.56v1.88h2.78l-.44 2.91h-2.34V22c4.78-.76 8.44-4.92 8.44-9.94z"/>
-              </svg>
-            )}
-          {fbLoading ? t("owner.login.signingIn") : t("owner.login.continueFacebook")}
-        </button>
-
-        <div className="login-divider"><span>{t("owner.login.or")}</span></div>
-
-        <AnimatePresence initial={false}>
-          {!showEmailForm ? (
-            <motion.button key="toggle" type="button" className="login-email-toggle"
-              onClick={() => setShowEmailForm(true)} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-              {t("owner.login.signInEmail")}
-            </motion.button>
-          ) : (
-            <motion.form key="emailform" onSubmit={handleEmail} className="login-form" noValidate
-              initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.25 }} style={{ overflow: "hidden" }}>
-              <div className="login-form__field">
-                <label htmlFor="owner-email">{t("owner.login.emailLabel")}</label>
-                <input id="owner-email" type="email" placeholder="owner@example.com"
-                  value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" required />
-              </div>
-              <div className="login-form__field">
-                <label htmlFor="owner-password">{t("owner.login.passwordLabel")}</label>
-                <input id="owner-password" type="password" placeholder="••••••••"
-                  value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required />
-              </div>
-              <button type="submit" className="login-form__submit" disabled={loading || gLoading}>
-                {loading ? <span className="map-loading-spinner" style={{ width: 18, height: 18, borderWidth: 2 }} /> : <LogIn size={18} />}
-                {loading ? t("owner.login.signingIn") : t("owner.login.signIn")}
-              </button>
-              <button type="button" onClick={() => setShowEmailForm(false)}
-                style={{ fontSize: 13, color: "var(--color-text-muted)", marginTop: 4, textAlign: "center", width: "100%" }}>
-                {t("owner.login.back")}
-              </button>
-            </motion.form>
-          )}
-        </AnimatePresence>
-
-        {error && (
-          <motion.p className="login-form__error" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-            {error}
-          </motion.p>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ─── Neighborhood Demand card ──────────────────────────────────────────────────
-// Shows a store owner WHICH of their own products people are actually
-// searching for, before they've made a single sale — see
-// fetchNeighborhoodDemandItems() in useStores.js.
-//
-// v2: originally showed one bare app-wide category-matched count
-// ("18 searches"), which was both vague (not tied to anything the owner
-// could act on) and misleading (counted a search that matched a
-// completely different store across town just as much as one that
-// matched this store). Now shows a short list of the store's OWN
-// products that were actually searched for, most-searched first —
-// concrete enough to act on ("I should stock more of this"). Still not
-// geofenced to literal distance (a deliberate scope decision, not an
-// oversight — see the SQL migration's notes) and still anonymous: no
-// searcher identity, only aggregate product-level interest.
-function NeighborhoodDemandCard({ storeId }) {
-  const { t } = useLanguage();
-  const [items, setItems] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    if (!storeId) return;
-    let cancelled = false;
-    setLoading(true);
-    fetchNeighborhoodDemandItems(storeId, 7).then((result) => {
-      if (!cancelled) { setItems(result); setLoading(false); }
-    });
-    return () => { cancelled = true; };
-  }, [storeId]);
-
-  const totalSearches = items?.reduce((sum, item) => sum + item.count, 0) ?? 0;
-
-  return (
-    <div className="metric-card" style={{
-      display: "flex", flexDirection: "column", gap: 8,
-      padding: "14px 16px", borderRadius: "var(--radius-md, 10px)",
-      border: "1px solid var(--color-border)", background: "var(--color-surface)",
-      marginBottom: 10,
-    }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <div style={{
-          width: 40, height: 40, borderRadius: "50%", flexShrink: 0,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          background: "var(--color-available-bg)", color: "var(--color-available)",
-        }}>
-          <Users size={20} strokeWidth={2} />
-        </div>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: "var(--color-text-muted)" }}>
-            {t("owner.dashboard.neighborhoodDemandTitle")}
-          </div>
-          <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--color-text-primary)", marginTop: 2 }}>
-            {loading
-              ? t("owner.dashboard.neighborhoodDemandLoading")
-              : items === null
-                ? t("owner.dashboard.neighborhoodDemandError")
-                : items.length === 0
-                  ? t("owner.dashboard.neighborhoodDemandZero")
-                  : t("owner.dashboard.neighborhoodDemandTotal", totalSearches)}
-          </div>
-        </div>
-      </div>
-
-      {!loading && items && items.length > 0 && (
-        <ul style={{ listStyle: "none", margin: 0, padding: "2px 0 0 52px", display: "flex", flexDirection: "column", gap: 4 }}>
-          {items.map((item) => (
-            <li key={item.productName} style={{
-              display: "flex", justifyContent: "space-between", gap: 12,
-              fontSize: 13, color: "var(--color-text-secondary)",
-            }}>
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.productName}</span>
-              <span style={{ flexShrink: 0, fontWeight: 700, color: "var(--color-text-primary)" }}>
-                {t("owner.dashboard.neighborhoodDemandItemCount", item.count)}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-// ─── Daily Cash-Out widget ─────────────────────────────────────────────────────
-// A re-themed, always-visible summary of today's ledger (see
-// fetchDailyTransactions in useStores.js) — instant bookkeeping without a
-// paper log, front and center on the dashboard rather than tucked behind
-// the "Today's Transactions" report button.
-function DailyCashOutCard({ storeId, refreshKey }) {
-  const { t } = useLanguage();
-  const [totals, setTotals] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    if (!storeId) return;
-    let cancelled = false;
-    setLoading(true);
-    fetchDailyTransactions(storeId).then((rows) => {
-      if (cancelled) return;
-      const sold = rows.filter((r) => r.transactionType === "sold");
-      const cashEarned = sold.reduce((sum, r) => sum + (r.earnings ?? 0), 0);
-      const itemsSold = sold.reduce((sum, r) => sum + Math.abs(r.quantityChanged ?? 0), 0);
-      setTotals({ cashEarned, itemsSold });
-      setLoading(false);
-    });
-    return () => { cancelled = true; };
-    // refreshKey ticks whenever `inventory` changes (a sale updates the
-    // inventory row via record_sale), so this stays current without a
-    // manual refresh button.
-  }, [storeId, refreshKey]);
-
-  return (
-    <div className="metric-card" style={{
-      display: "flex", alignItems: "center", gap: 16,
-      padding: "14px 16px", borderRadius: "var(--radius-md, 10px)",
-      border: "1px solid var(--color-border)", background: "var(--color-surface)",
-      marginBottom: 16, flexWrap: "wrap",
-    }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <div style={{
-          width: 40, height: 40, borderRadius: "50%", flexShrink: 0,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          background: "var(--color-brand-primary-bg, var(--color-available-bg))", color: "var(--color-brand-primary)",
-        }}>
-          <Wallet size={20} strokeWidth={2} />
-        </div>
-        <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color: "var(--color-text-muted)" }}>
-          {t("owner.dashboard.dailyCashOutTitle")}
-        </div>
-      </div>
-
-      {loading ? (
-        <span style={{ fontSize: 13, color: "var(--color-text-muted)" }}>{t("owner.dashboard.cashOutLoading")}</span>
-      ) : (
-        <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
-          <div>
-            <div style={{ fontSize: 18, fontWeight: 800, color: "var(--color-available)" }}>
-              {formatPrice(totals?.cashEarned ?? 0)}
-            </div>
-            <div style={{ fontSize: 11, color: "var(--color-text-muted)" }}>{t("owner.dashboard.cashEarnedToday")}</div>
-          </div>
-          <div>
-            <div style={{ fontSize: 18, fontWeight: 800, color: "var(--color-text-primary)" }}>
-              {totals?.itemsSold ?? 0}
-            </div>
-            <div style={{ fontSize: 11, color: "var(--color-text-muted)" }}>{t("owner.dashboard.itemsSoldToday")}</div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Delete store confirmation ────────────────────────────────────────────────
+// ─── Delete store confirmation (unchanged behaviour) ────────────────────────
 function DeleteStoreConfirm({ isOpen, onClose, store, onDeleted }) {
   const { t } = useLanguage();
   const [deleting, setDeleting] = useState(false);
@@ -742,27 +84,17 @@ function DeleteStoreConfirm({ isOpen, onClose, store, onDeleted }) {
     <AnimatePresence>
       {isOpen && store && (
         <>
-          <motion.div
-            className="sheet-overlay" style={{ zIndex: 1100 }}
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            onClick={onClose} aria-hidden="true"
-          />
-          <motion.div
-            className="confirm-dialog"
+          <motion.div className="sheet-overlay" style={{ zIndex: 1100 }}
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} aria-hidden="true" />
+          <motion.div className="confirm-dialog"
             initial={{ scale: 0.88, opacity: 0, y: 16 }}
             animate={{ scale: 1, opacity: 1, y: 0, transition: { type: "spring", damping: 22, stiffness: 340 } }}
-            exit={{ scale: 0.92, opacity: 0, y: 8 }}
-            role="alertdialog" aria-modal="true"
-          >
-            <div className="confirm-dialog__icon-wrap">
-              <AlertTriangle size={28} className="confirm-dialog__icon" />
-            </div>
+            exit={{ scale: 0.92, opacity: 0, y: 8 }} role="alertdialog" aria-modal="true">
+            <div className="confirm-dialog__icon-wrap"><AlertTriangle size={28} className="confirm-dialog__icon" /></div>
             <h3 className="confirm-dialog__title">{t("owner.dashboard.deleteStoreTitle")}</h3>
             <p className="confirm-dialog__desc">{t("owner.dashboard.deleteStoreDesc1")}</p>
             <p className="confirm-dialog__product-name">"{store.name}"</p>
-            <p className="confirm-dialog__desc" style={{ marginTop: 4 }}>
-              {t("owner.dashboard.deleteStoreDesc2")}
-            </p>
+            <p className="confirm-dialog__desc" style={{ marginTop: 4 }}>{t("owner.dashboard.deleteStoreDesc2")}</p>
             {error && <p className="confirm-dialog__error">⚠️ {error}</p>}
             <div className="confirm-dialog__actions">
               <button type="button" className="confirm-dialog__cancel" onClick={onClose} disabled={deleting}>
@@ -770,13 +102,8 @@ function DeleteStoreConfirm({ isOpen, onClose, store, onDeleted }) {
               </button>
               <button type="button" className="confirm-dialog__delete" onClick={handleDelete} disabled={deleting}>
                 {deleting ? (
-                  <>
-                    <span className="map-loading-spinner" style={{ width: 16, height: 16, borderWidth: 2, borderTopColor: "#fff" }} />
-                    {t("owner.confirmDelete.deleting")}
-                  </>
-                ) : (
-                  <><Trash2 size={16} /> {t("owner.confirmDelete.confirm")}</>
-                )}
+                  <><span className="map-loading-spinner" style={{ width: 16, height: 16, borderWidth: 2, borderTopColor: "#fff" }} />{t("owner.confirmDelete.deleting")}</>
+                ) : (<><Trash2 size={16} /> {t("owner.confirmDelete.confirm")}</>)}
               </button>
             </div>
           </motion.div>
@@ -786,40 +113,111 @@ function DeleteStoreConfirm({ isOpen, onClose, store, onDeleted }) {
   );
 }
 
-// ─── Store switcher ───────────────────────────────────────────────────────────
+// ─── Store switcher ─────────────────────────────────────────────────────────
 function StoreSwitcher({ stores, selectedStoreId, onSelect }) {
   const { t } = useLanguage();
   if (stores.length <= 1) return null;
-
   return (
-    <div style={{ position: "relative", display: "inline-block" }}>
-      <select
-        value={selectedStoreId ?? ""}
-        onChange={(e) => onSelect(e.target.value)}
-        aria-label={t("owner.dashboard.switchStoreAria")}
-        style={{
-          appearance: "none", background: "var(--color-surface)",
-          border: "1px solid var(--color-border)", borderRadius: "var(--radius-md, 8px)",
-          padding: "6px 30px 6px 10px", fontSize: 13, fontWeight: 600, cursor: "pointer",
-        }}
-      >
-        {stores.map((s) => (
-          <option key={s.id} value={s.id}>
-            {s.name}
-          </option>
-        ))}
+    <div className="store-switch">
+      <select value={selectedStoreId ?? ""} onChange={(e) => onSelect(e.target.value)} aria-label={t("owner.dashboard.switchStoreAria")}>
+        {stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
       </select>
-      <ChevronDown size={14}
-        style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+      <ChevronDown size={14} />
     </div>
   );
 }
 
-// ─── Main component ───────────────────────────────────────────────────────────
+// ─── Small view helpers ─────────────────────────────────────────────────────
+function PageHeader({ title, subtitle, actions }) {
+  return (
+    <div className="page-head">
+      <div>
+        <h2 className="page-head__title">{title}</h2>
+        {subtitle && <p className="page-head__sub">{subtitle}</p>}
+      </div>
+      {actions && <div className="page-head__actions">{actions}</div>}
+    </div>
+  );
+}
+
+function Segmented({ options, value, onChange, tourIds = {} }) {
+  return (
+    <div className="segmented" role="tablist">
+      {options.map((o) => (
+        <button key={o.value} type="button" role="tab" aria-selected={value === o.value}
+          className={`segmented__btn ${value === o.value ? "segmented__btn--active" : ""}`}
+          onClick={() => onChange(o.value)} data-tour-id={tourIds[o.value]}>
+          {o.icon}{o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Inventory CSV view — summary, preview, and the download button. */
+function CsvView({ inventory, storeName }) {
+  const { t } = useLanguage();
+  const units = inventory.reduce((s, p) => s + (p.isService ? 0 : p.quantity ?? 0), 0);
+  const low = inventory.filter((p) => p.status === "low").length;
+  const out = inventory.filter((p) => p.status === "out").length;
+  const preview = inventory.slice(0, 8);
+  return (
+    <div className="view-stack">
+      <PageHeader title={t("owner.dashboard.inventoryCsv")} subtitle={t("dash.csv.subtitle")}
+        actions={
+          <button type="button" className="btn btn--primary" disabled={inventory.length === 0}
+            onClick={() => exportCurrentInventoryCSV(inventory, storeName)}>
+            <FileDown size={16} /> {t("dash.csv.download")}
+          </button>
+        } />
+      <div className="stat-grid">
+        <div className="stat"><strong>{inventory.length}</strong><span>{t("dash.csv.products")}</span></div>
+        <div className="stat"><strong>{units}</strong><span>{t("dash.csv.units")}</span></div>
+        <div className="stat stat--low"><strong>{low}</strong><span>{t("dash.csv.low")}</span></div>
+        <div className="stat stat--out"><strong>{out}</strong><span>{t("dash.csv.out")}</span></div>
+      </div>
+      <section className="panel-card">
+        <h3 className="panel-card__title" style={{ marginBottom: 10 }}>{t("dash.csv.preview")}</h3>
+        {inventory.length === 0 ? (
+          <p className="panel-card__muted">{t("owner.dashboard.noProducts")}</p>
+        ) : (
+          <div className="table-scroll">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>{t("owner.bulkImport.colName")}</th><th>{t("owner.bulkImport.colCategory")}</th>
+                  <th className="num">{t("owner.bulkImport.colPrice")}</th><th className="num">{t("owner.bulkImport.colQuantity")}</th>
+                  <th>{t("dash.csv.status")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {preview.map((p) => (
+                  <tr key={p.id}>
+                    <td>{p.name}</td><td>{p.category}</td>
+                    <td className="num">{formatPrice(p.price)}</td>
+                    <td className="num">{p.isService ? "—" : p.quantity}</td>
+                    <td><span className={`pill pill--${p.status}`}>{t(`status.${p.status}`)}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {inventory.length > preview.length && (
+          <p className="panel-card__muted" style={{ marginTop: 10 }}>{t("dash.csv.more", inventory.length - preview.length)}</p>
+        )}
+      </section>
+    </div>
+  );
+}
+
+// ─── Main component ─────────────────────────────────────────────────────────
 export default function OwnerDashboard({ session }) {
   const { t, language, setLanguage } = useLanguage();
   const { theme, toggleTheme } = useTheme();
+  const isDesktop = useMediaQuery(DESKTOP_QUERY);
   const user = session?.user ?? null;
+  const { isSuperAdmin } = useProfileRole(user?.id ?? null);
 
   const { stores, checked: storesChecked, loading: storesLoading, refetch: refetchStores } = useMyStores(user?.id ?? null);
 
@@ -833,12 +231,9 @@ export default function OwnerDashboard({ session }) {
       if (selectedStoreId !== null) setSelectedStoreId(null);
       return;
     }
-    const stillValid = stores.some((s) => s.id === selectedStoreId);
-    if (!stillValid) {
+    if (!stores.some((s) => s.id === selectedStoreId)) {
       if (justAddedRef.current) {
-        const newest = [...stores].sort(
-          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-        )[0];
+        const newest = [...stores].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
         setSelectedStoreId(newest.id);
         justAddedRef.current = false;
       } else {
@@ -848,40 +243,49 @@ export default function OwnerDashboard({ session }) {
   }, [stores, selectedStoreId]);
 
   const myStore = stores.find((s) => s.id === selectedStoreId) ?? null;
-
   const { inventory } = useOwnerInventory(myStore?.id ?? null);
 
-  const [filterQuery, setFilterQuery]         = useState("");
-  const [formModalOpen, setFormModalOpen]     = useState(false);
-  const [editingProduct, setEditingProduct]   = useState(null);
+  // ── Navigation state ──
+  const [view, setView] = useState("inventory");       // inventory|add|csv|today|monthly|reports|alerts
+  const [addTab, setAddTab] = useState("single");      // single|many
+  const [reportTab, setReportTab] = useState("today"); // today|monthly|csv  (mobile "Reports")
+  const [focusRequest, setFocusRequest] = useState(null);
+
+  // Map the raw view onto what the current screen size can actually show.
+  const effectiveView = (() => {
+    if (isDesktop) {
+      if (view === "reports") return reportTab;
+      if (view === "alerts") return "inventory";
+      return view;
+    }
+    if (view === "csv" || view === "today" || view === "monthly") return "reports";
+    return view;
+  })();
+  const activeReportTab = ["csv", "today", "monthly"].includes(view) ? view : reportTab;
+
+  const navigate = (next, tab) => {
+    if (next === "add" && tab) setAddTab(tab);
+    if (["csv", "today", "monthly"].includes(next)) setReportTab(next);
+    setView(next);
+    window.scrollTo({ top: 0 });
+  };
+
+  const [filterQuery, setFilterQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [formModalOpen, setFormModalOpen] = useState(false);
+  const [editingProduct, setEditingProduct] = useState(null);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [deletingProduct, setDeletingProduct] = useState(null);
-  const [sellModalOpen, setSellModalOpen]     = useState(false);
-  const [sellingProduct, setSellingProduct]   = useState(null);
-  const [storeEditOpen, setStoreEditOpen]     = useState(false);
-  const [bulkImportOpen, setBulkImportOpen]   = useState(false);
+  const [sellModalOpen, setSellModalOpen] = useState(false);
+  const [sellingProduct, setSellingProduct] = useState(null);
+  const [storeEditOpen, setStoreEditOpen] = useState(false);
   const [newTransactionOpen, setNewTransactionOpen] = useState(false);
-  const [dailyModalOpen, setDailyModalOpen]   = useState(false);
-  const [monthlyModalOpen, setMonthlyModalOpen] = useState(false);
-  const [onboardingOpen, setOnboardingOpen]   = useState(false);
-  const [headerMenuOpen, setHeaderMenuOpen]   = useState(false);
-  const [whatsNewOpen, setWhatsNewOpen]       = useState(false);
+  const [onboardingOpen, setOnboardingOpen] = useState(false);
+  const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
+  const [whatsNewOpen, setWhatsNewOpen] = useState(false);
 
-  // Auto-show exactly ONE of these, the first time the FULL dashboard
-  // (not the login screen, not the loading state, not the registration
-  // wizard) actually renders:
-  //   - Brand-new owner (never seen the tour)  -> the onboarding tour.
-  //     Also immediately marks the CURRENT changelog version as seen,
-  //     since a first-time owner has no "before" to compare against —
-  //     showing them a "look what's new" popup right after they just
-  //     finished the tour explaining the current dashboard would be
-  //     redundant and confusing.
-  //   - Returning owner, tour already seen, but a newer changelog
-  //     version exists than what they last saw -> the What's New modal.
-  //   - Returning owner with nothing new -> neither.
   useEffect(() => {
     if (!user || !storesChecked || storesLoading) return;
-
     if (!hasSeenTour(OWNER_TOUR_STORAGE_KEY)) {
       setOnboardingOpen(true);
       markChangelogSeen(CHANGELOG_VERSION);
@@ -892,47 +296,46 @@ export default function OwnerDashboard({ session }) {
   }, [user, storesChecked, storesLoading]);
 
   const tourLabels = {
-    skip: t("owner.onboarding.skip"),
-    next: t("owner.onboarding.next"),
-    back: t("owner.onboarding.back"),
-    done: t("owner.onboarding.done"),
+    skip: t("owner.onboarding.skip"), next: t("owner.onboarding.next"),
+    back: t("owner.onboarding.back"), done: t("owner.onboarding.done"),
     stepCounter: (current, total) => t("owner.onboarding.stepCounter", current, total),
   };
 
+  // Returns { error } so StockAdjuster can show "couldn't save" instead of
+  // pretending it worked.
   const handleQuantityChange = async (productId, quantity, transactionType, notes = null) => {
     const { error } = await recordStockAdjustment(productId, quantity, transactionType, notes);
     if (error) console.error("Quantity update failed:", error);
+    return { error };
   };
 
-  const openAddModal    = ()   => { setEditingProduct(null);    setFormModalOpen(true); };
-  const openEditModal   = (p)  => { setEditingProduct(p);       setFormModalOpen(true); };
-  const openDeleteModal = (p)  => { setDeletingProduct(p);      setDeleteModalOpen(true); };
-  const openSellModal   = (p)  => { setSellingProduct(p);       setSellModalOpen(true); };
-
-  const handleExportInventory = () => {
-    exportCurrentInventoryCSV(inventory, myStore?.name);
+  const openEditModal = (p) => { setEditingProduct(p); setFormModalOpen(true); };
+  const openDeleteModal = (p) => { setDeletingProduct(p); setDeleteModalOpen(true); };
+  const openSellModal = (p) => { setSellingProduct(p); setSellModalOpen(true); };
+  const restockProduct = (p) => {
+    setFilterQuery(""); setStatusFilter("all");
+    setView("inventory");
+    setFocusRequest({ id: p.id, n: Date.now() });
   };
 
-  // "Paubos List": items running low or out rise to the top, since
-  // that's the actual question an owner opens this screen to answer
-  // ("what do I need to restock?"), not "what's alphabetically first?".
-  // Within the same severity tier, alphabetical order is kept (matches
-  // useOwnerInventory's own .order("name") — a stable, predictable
-  // secondary sort rather than reshuffling every render).
-  // IMPORTANT: `.sort()` mutates in place, and when filterQuery is empty
-  // `filteredInventory` would otherwise be the exact same array
-  // reference as `inventory` (React state) — spreading into a new array
-  // first avoids silently mutating that state array out from under React.
-  const filteredInventory = [...(filterQuery.trim()
-    ? inventory.filter((p) =>
-        p.name.toLowerCase().includes(filterQuery.toLowerCase()) ||
-        p.category.toLowerCase().includes(filterQuery.toLowerCase()))
-    : inventory)].sort((a, b) => {
-      const severityDiff = (STATUS_SEVERITY[a.status] ?? 99) - (STATUS_SEVERITY[b.status] ?? 99);
-      return severityDiff !== 0 ? severityDiff : a.name.localeCompare(b.name);
+  const alertCount = useMemo(
+    () => inventory.filter((p) => !p.isService && (p.status === "out" || p.status === "low")).length,
+    [inventory]
+  );
+
+  const filteredInventory = useMemo(() => {
+    const q = filterQuery.trim().toLowerCase();
+    const list = inventory.filter((p) => {
+      if (statusFilter !== "all" && p.status !== statusFilter) return false;
+      return !q || p.name.toLowerCase().includes(q) || p.category.toLowerCase().includes(q);
     });
+    return [...list].sort((a, b) => {
+      const d = (STATUS_SEVERITY[a.status] ?? 99) - (STATUS_SEVERITY[b.status] ?? 99);
+      return d !== 0 ? d : a.name.localeCompare(b.name);
+    });
+  }, [inventory, filterQuery, statusFilter]);
 
-  if (!user) return <LoginScreen />;
+  if (!user) return <AuthScreen />;
 
   if (!storesChecked || storesLoading) return (
     <div className="login-screen">
@@ -943,13 +346,9 @@ export default function OwnerDashboard({ session }) {
   if (storesChecked && stores.length === 0) {
     return (
       <div style={{ minHeight: "100dvh", height: "auto", overflowY: "auto", overflowX: "hidden" }}>
-        <StoreRegistrationForm
-          user={user}
-          onComplete={() => { justAddedRef.current = true; refetchStores(); }}
-        />
+        <StoreRegistrationForm user={user} onComplete={() => { justAddedRef.current = true; refetchStores(); }} />
         <div style={{ textAlign: "center", padding: "16px 0 32px" }}>
-          <button type="button"
-            style={{ fontSize: 13, color: "var(--color-text-muted)", textDecoration: "underline" }}
+          <button type="button" style={{ fontSize: 13, color: "var(--color-text-muted)", textDecoration: "underline" }}
             onClick={() => supabase.auth.signOut()}>
             {t("owner.dashboard.signOutDifferent")}
           </button>
@@ -961,376 +360,257 @@ export default function OwnerDashboard({ session }) {
   if (addingStore) {
     return (
       <div style={{ minHeight: "100dvh", height: "auto", overflowY: "auto", overflowX: "hidden" }}>
-        <StoreRegistrationForm
-          user={user}
-          onCancel={() => setAddingStore(false)}
-          onComplete={() => { justAddedRef.current = true; refetchStores(); setAddingStore(false); }}
-        />
+        <StoreRegistrationForm user={user} onCancel={() => setAddingStore(false)}
+          onComplete={() => { justAddedRef.current = true; refetchStores(); setAddingStore(false); }} />
       </div>
     );
   }
 
-  return (
-    <div className="dashboard">
-      <header className="dashboard-header">
-        <div className="dashboard-header__left" style={{ minWidth: 0, flex: 1 }}>
-          <Store size={22} style={{ flexShrink: 0 }} />
-          <div style={{ minWidth: 0 }}>
-            <h1
-              className="dashboard-header__title"
-              style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-            >
-              {myStore?.name ?? t("owner.dashboard.myStore")}
-            </h1>
-            <span
-              className="dashboard-header__subtitle"
-              style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-            >
-              {myStore?.type ? `${myStore.type} · ` : ""}{user.email}
-            </span>
-          </div>
-        </div>
+  const cashRefreshKey = inventory.length + inventory.reduce((s, p) => s + (p.quantity ?? 0), 0);
+  const goInventory = () => navigate("inventory");
 
-        {/* Compact controls — StoreSwitcher (only rendered at all when
-            there's more than one store), 3 small icon buttons, and a
-            single "⋮" menu for the less-frequent store-management
-            actions. This replaces what used to be 7-8 separate full-
-            width pill buttons crammed into this row, which wrapped
-            into a tall multi-line stack on narrow phones and visually
-            crowded the store name on the left — this stays a single
-            row on virtually any phone width. */}
-        <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-          <StoreSwitcher stores={stores} selectedStoreId={selectedStoreId} onSelect={setSelectedStoreId} />
-
-          <button
-            type="button"
-            data-tour-id="lang-theme-toggle"
-            onClick={() => setLanguage(language === "en" ? "tl" : "en")}
-            aria-label={t("common.language")}
-            title={t("common.language")}
-            style={{
-              display: "inline-flex", alignItems: "center", justifyContent: "center",
-              height: 36, minWidth: 36, padding: "0 8px",
-              borderRadius: "var(--radius-pill, 999px)", fontSize: 11, fontWeight: 700,
-              background: "rgba(255,255,255,0.12)", color: "#fff", border: "1px solid rgba(255,255,255,0.2)",
-              cursor: "pointer", flexShrink: 0,
-            }}
-          >
-            {language === "en" ? "TL" : "EN"}
-          </button>
-
-          <button
-            type="button"
-            onClick={toggleTheme}
-            aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-            title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-            style={{
-              display: "inline-flex", alignItems: "center", justifyContent: "center",
-              width: 36, height: 36, borderRadius: "50%", flexShrink: 0,
-              background: "rgba(255,255,255,0.12)", color: "#fff", border: "1px solid rgba(255,255,255,0.2)",
-              cursor: "pointer",
-            }}
-          >
-            {theme === "dark" ? <Sun size={15} strokeWidth={2.2} /> : <Moon size={15} strokeWidth={2.2} />}
-          </button>
-
-          <button
-            type="button"
-            data-tour-id="help-btn"
-            onClick={() => setOnboardingOpen(true)}
-            aria-label={t("owner.onboarding.helpAria")}
-            title={t("owner.onboarding.helpAria")}
-            style={{
-              display: "inline-flex", alignItems: "center", justifyContent: "center",
-              width: 36, height: 36, borderRadius: "50%", flexShrink: 0,
-              background: "rgba(255,255,255,0.12)", color: "#fff", border: "1px solid rgba(255,255,255,0.2)",
-              cursor: "pointer",
-            }}
-          >
-            <HelpCircle size={16} strokeWidth={2.2} />
-          </button>
-
-          {/* Overflow menu: Add Store / Edit Store / Delete Store / Sign Out */}
-          <div style={{ position: "relative", flexShrink: 0 }}>
-            <button
-              type="button"
-              data-tour-id="edit-store-btn"
-              onClick={() => setHeaderMenuOpen((v) => !v)}
-              aria-label={t("owner.dashboard.moreActionsAria")}
-              aria-expanded={headerMenuOpen}
-              style={{
-                display: "inline-flex", alignItems: "center", justifyContent: "center",
-                width: 36, height: 36, borderRadius: "50%",
-                background: "rgba(255,255,255,0.12)", color: "#fff", border: "1px solid rgba(255,255,255,0.2)",
-                cursor: "pointer",
-              }}
-            >
-              <MoreVertical size={16} strokeWidth={2.2} />
+  // ── Views ──
+  const inventoryView = (
+    <div className="view-stack">
+      {!isDesktop && myStore && (
+        <>
+          <DailyCashOutCard storeId={myStore.id} refreshKey={cashRefreshKey} />
+          {alertCount > 0 && (
+            <button type="button" className="alert-banner" onClick={() => navigate("alerts")}>
+              <AlertTriangle size={18} />
+              <span>{t("alerts.banner", alertCount)}</span>
+              <em>{t("alerts.view")} →</em>
             </button>
+          )}
+          <NeighborhoodDemandCard storeId={myStore.id} />
+        </>
+      )}
 
-            {headerMenuOpen && (
-              <>
-                {/* Invisible full-screen backdrop — click anywhere outside
-                    the dropdown to close it, same pattern used by every
-                    other overlay/sheet in this app. */}
-                <div
-                  onClick={() => setHeaderMenuOpen(false)}
-                  style={{ position: "fixed", inset: 0, zIndex: 150 }}
-                  aria-hidden="true"
-                />
-                <div
-                  role="menu"
-                  style={{
-                    position: "absolute",
-                    top: "calc(100% + 8px)",
-                    right: 0,
-                    zIndex: 151,
-                    minWidth: 200,
-                    background: "var(--color-surface)",
-                    borderRadius: 12,
-                    boxShadow: "var(--shadow-lg)",
-                    padding: 6,
-                    display: "flex",
-                    flexDirection: "column",
-                  }}
-                >
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => { setHeaderMenuOpen(false); setAddingStore(true); }}
-                    style={{
-                      display: "flex", alignItems: "center", gap: 10, height: 44, padding: "0 12px",
-                      borderRadius: 8, border: "none", background: "none",
-                      color: "var(--color-text-primary)", fontSize: 13, fontWeight: 600,
-                      cursor: "pointer", textAlign: "left", width: "100%",
-                    }}
-                  >
-                    <Plus size={16} strokeWidth={2} /> {t("owner.dashboard.addStore")}
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => { setHeaderMenuOpen(false); setStoreEditOpen(true); }}
-                    style={{
-                      display: "flex", alignItems: "center", gap: 10, height: 44, padding: "0 12px",
-                      borderRadius: 8, border: "none", background: "none",
-                      color: "var(--color-text-primary)", fontSize: 13, fontWeight: 600,
-                      cursor: "pointer", textAlign: "left", width: "100%",
-                    }}
-                  >
-                    <Settings size={16} strokeWidth={2} /> {t("owner.dashboard.editStoreLabel")}
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => { setHeaderMenuOpen(false); setDeleteStoreConfirmOpen(true); }}
-                    style={{
-                      display: "flex", alignItems: "center", gap: 10, height: 44, padding: "0 12px",
-                      borderRadius: 8, border: "none", background: "none",
-                      color: "var(--color-out)", fontSize: 13, fontWeight: 600,
-                      cursor: "pointer", textAlign: "left", width: "100%",
-                    }}
-                  >
-                    <Trash2 size={16} strokeWidth={2} /> {t("owner.dashboard.deleteStoreLabel")}
-                  </button>
-                  <div style={{ height: 1, background: "var(--color-border)", margin: "6px 4px" }} />
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => { setHeaderMenuOpen(false); supabase.auth.signOut(); }}
-                    style={{
-                      display: "flex", alignItems: "center", height: 44, padding: "0 12px",
-                      borderRadius: 8, border: "none", background: "none",
-                      color: "var(--color-text-secondary)", fontSize: 13, fontWeight: 600,
-                      cursor: "pointer", textAlign: "left", width: "100%",
-                    }}
-                  >
-                    {t("owner.dashboard.signOut")}
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      </header>
-
-      <main className="dashboard-main">
-        {myStore && (
-          <>
-            <DailyCashOutCard storeId={myStore.id} refreshKey={inventory.length + inventory.reduce((s, p) => s + (p.quantity ?? 0), 0)} />
-            <NeighborhoodDemandCard storeId={myStore.id} />
-          </>
-        )}
-
-        <div className="dashboard-toolbar">
-          <div className="dashboard-section-label">
-            <Package size={14} />&nbsp;{t("owner.dashboard.inventory")}
-            <span className="dashboard-toolbar__count">
-              {filterQuery
-                ? t("owner.dashboard.productsCountFiltered", filteredInventory.length, inventory.length)
-                : t("owner.dashboard.productsCount", filteredInventory.length)}
-            </span>
-          </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button
-              type="button"
-              data-tour-id="bulk-import-btn"
-              onClick={() => setBulkImportOpen(true)}
-              style={{
-                display: "inline-flex", alignItems: "center", gap: 6, height: 44, padding: "0 16px",
-                borderRadius: "var(--radius-pill, 999px)", fontSize: 13, fontWeight: 700,
-                fontFamily: "var(--font-heading, inherit)", whiteSpace: "nowrap",
-                background: "transparent", color: "var(--color-brand-primary)",
-                border: "1.5px solid var(--color-brand-primary)",
-              }}
-            >
-              <UploadCloud size={16} strokeWidth={2} />
-              <span>{t("owner.dashboard.bulkImportCsv")}</span>
-            </button>
-            <button
-              type="button"
-              data-tour-id="new-transaction-btn"
-              onClick={() => setNewTransactionOpen(true)}
-              disabled={inventory.length === 0}
-              style={{
-                display: "inline-flex", alignItems: "center", gap: 6, height: 44, padding: "0 16px",
-                borderRadius: "var(--radius-pill, 999px)", fontSize: 13, fontWeight: 700,
-                fontFamily: "var(--font-heading, inherit)", whiteSpace: "nowrap",
-                background: "var(--color-available)", color: "#fff", border: "none",
-              }}
-            >
-              <ShoppingCart size={16} strokeWidth={2} />
-              <span>{t("owner.dashboard.newTransaction")}</span>
-            </button>
-            <button type="button" className="dashboard-add-btn" data-tour-id="add-product-btn" onClick={openAddModal}>
-              <Plus size={18} strokeWidth={2.5} /> {t("owner.dashboard.addProduct")}
-            </button>
-          </div>
-        </div>
-
-        {/* Reports — each opens a viewer modal (date/month picker + a
-            list of entries), with CSV export available from inside that
-            modal, rather than downloading blind with no way to preview
-            or pick a different day/month first. */}
-        <div data-tour-id="reports-toolbar" style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
-          <button
-            type="button"
-            onClick={handleExportInventory}
-            disabled={inventory.length === 0}
-            style={{
-              display: "inline-flex", alignItems: "center", gap: 6, height: 44, padding: "0 14px",
-              borderRadius: "var(--radius-md, 8px)", fontSize: 13, fontWeight: 600,
-              background: "var(--color-surface-3)", color: "var(--color-text-secondary)", border: "none",
-            }}
-          >
-            <FileDown size={14} /> {t("owner.dashboard.inventoryCsv")}
+      <PageHeader
+        title={t("owner.dashboard.inventory")}
+        subtitle={filterQuery || statusFilter !== "all"
+          ? t("owner.dashboard.productsCountFiltered", filteredInventory.length, inventory.length)
+          : t("owner.dashboard.productsCount", filteredInventory.length)}
+        actions={isDesktop ? (
+          <button type="button" className="btn btn--primary" onClick={() => navigate("add", "single")}>
+            <Plus size={16} strokeWidth={2.5} /> {t("owner.dashboard.addProduct")}
           </button>
-          <button
-            type="button"
-            onClick={() => setDailyModalOpen(true)}
-            style={{
-              display: "inline-flex", alignItems: "center", gap: 6, height: 44, padding: "0 14px",
-              borderRadius: "var(--radius-md, 8px)", fontSize: 13, fontWeight: 600,
-              background: "var(--color-surface-3)", color: "var(--color-text-secondary)", border: "none",
-            }}
-          >
-            <FileDown size={14} /> {t("owner.dashboard.todaysTransactions")}
-          </button>
-          <button
-            type="button"
-            onClick={() => setMonthlyModalOpen(true)}
-            style={{
-              display: "inline-flex", alignItems: "center", gap: 6, height: 44, padding: "0 14px",
-              borderRadius: "var(--radius-md, 8px)", fontSize: 13, fontWeight: 600,
-              background: "var(--color-surface-3)", color: "var(--color-text-secondary)", border: "none",
-            }}
-          >
-            <FileDown size={14} /> {t("owner.dashboard.monthlyRevenue")}
-          </button>
-        </div>
+        ) : null}
+      />
 
-        {inventory.length > 4 && (
-          <div className="dashboard-filter">
-            <input type="search" className="dashboard-filter__input"
-              placeholder={t("owner.dashboard.filterPlaceholder")} value={filterQuery}
+      {inventory.length > 0 && (
+        <div className="filter-bar">
+          <div className="filter-bar__search">
+            <Search size={16} />
+            <input type="search" placeholder={t("owner.dashboard.filterPlaceholder")} value={filterQuery}
               onChange={(e) => setFilterQuery(e.target.value)} />
-            {filterQuery && (
-              <button className="dashboard-filter__clear" onClick={() => setFilterQuery("")} type="button">✕</button>
-            )}
+            {filterQuery && <button type="button" onClick={() => setFilterQuery("")} aria-label="Clear">✕</button>}
           </div>
-        )}
-
-        <p className="dashboard-hint">{t("owner.dashboard.hint")}</p>
-
-        {inventory.length === 0 && (
-          <div className="dashboard-empty">
-            <Package size={36} style={{ opacity: 0.3 }} />
-            <span>{t("owner.dashboard.noProducts")}</span>
-            <button type="button" className="dashboard-add-btn" onClick={openAddModal} style={{ marginTop: 8 }}>
-              <Plus size={18} /> {t("owner.dashboard.addFirstProduct")}
-            </button>
-          </div>
-        )}
-
-        {inventory.length > 0 && filteredInventory.length === 0 && (
-          <div className="dashboard-empty">{t("owner.dashboard.noMatch", filterQuery)}</div>
-        )}
-
-        <div className="dashboard-product-list">
-          <AnimatePresence>
-            {filteredInventory.map((product, index) => (
-              <ProductCard key={product.id} product={product}
-                tourId={index === 0 ? "first-product-card" : undefined}
-                onQuantityChange={handleQuantityChange} onEdit={openEditModal} onDelete={openDeleteModal} onSell={openSellModal} />
+          <div className="chips" role="group">
+            {[["all", t("dash.filter.all")], ["low", t("status.low")], ["out", t("status.out")]].map(([v, label]) => (
+              <button key={v} type="button" className={`chip ${statusFilter === v ? "chip--active" : ""} ${v !== "all" ? `chip--${v}` : ""}`}
+                onClick={() => setStatusFilter(v)}>{label}</button>
             ))}
-          </AnimatePresence>
+          </div>
         </div>
-      </main>
+      )}
 
-      <ProductFormModal isOpen={formModalOpen} onClose={() => setFormModalOpen(false)}
-        storeId={myStore?.id} initialData={editingProduct} />
-      <SellModal isOpen={sellModalOpen} onClose={() => setSellModalOpen(false)}
-        product={sellingProduct} onSold={() => setSellModalOpen(false)} />
-      <ConfirmDeleteModal isOpen={deleteModalOpen} onClose={() => setDeleteModalOpen(false)}
-        storeId={myStore?.id} product={deletingProduct} />
+      <p className="dashboard-hint">{t("owner.dashboard.hint")}</p>
+
+      {inventory.length === 0 && (
+        <div className="dashboard-empty">
+          <Package size={40} style={{ opacity: 0.3 }} />
+          <span>{t("owner.dashboard.noProducts")}</span>
+          <button type="button" className="btn btn--primary" onClick={() => navigate("add", "single")}>
+            <Plus size={16} /> {t("owner.dashboard.addFirstProduct")}
+          </button>
+        </div>
+      )}
+      {inventory.length > 0 && filteredInventory.length === 0 && (
+        <div className="dashboard-empty">{t("owner.dashboard.noMatch", filterQuery)}</div>
+      )}
+
+      <div className="dashboard-product-list">
+        <AnimatePresence>
+          {filteredInventory.map((product, index) => (
+            <ProductCard key={product.id} product={product} focusRequest={focusRequest}
+              tourId={index === 0 ? "first-product-card" : undefined}
+              onQuantityChange={handleQuantityChange} onEdit={openEditModal} onDelete={openDeleteModal} onSell={openSellModal} />
+          ))}
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+
+  const addView = (
+    <div className="view-stack">
+      <PageHeader title={t("dash.add.title")} subtitle={t("dash.add.subtitle")} />
+      <Segmented value={addTab} onChange={setAddTab}
+        options={[
+          { value: "single", label: t("dash.add.single"), icon: <PackagePlus size={16} /> },
+          { value: "many", label: t("dash.add.many"), icon: <UploadCloud size={16} /> },
+        ]} />
+      {addTab === "single" ? (
+        <div className="inline-host" key="single">
+          <ProductFormModal isOpen onClose={goInventory} storeId={myStore?.id} initialData={null} />
+        </div>
+      ) : (
+        <div className="inline-host inline-host--wide" key="many">
+          <BulkImportModal isOpen onClose={goInventory} storeId={myStore?.id} />
+        </div>
+      )}
+    </div>
+  );
+
+  const todayView = (
+    <div className="inline-host inline-host--wide" key="today">
+      <DailyTransactionsModal isOpen onClose={goInventory} storeId={myStore?.id} storeName={myStore?.name} />
+    </div>
+  );
+  const monthlyView = (
+    <div className="inline-host inline-host--wide" key="monthly">
+      <MonthlyRevenueModal isOpen onClose={goInventory} storeId={myStore?.id} storeName={myStore?.name} />
+    </div>
+  );
+  const csvView = <CsvView inventory={inventory} storeName={myStore?.name} />;
+
+  const reportsView = (
+    <div className="view-stack">
+      <PageHeader title={t("dash.nav.reports")} />
+      <Segmented value={activeReportTab} onChange={(v) => { setReportTab(v); setView(v); }}
+        options={[
+          { value: "today", label: t("dash.reports.today") },
+          { value: "monthly", label: t("dash.reports.monthly") },
+          { value: "csv", label: t("dash.reports.csv") },
+        ]} />
+      {activeReportTab === "today" && todayView}
+      {activeReportTab === "monthly" && monthlyView}
+      {activeReportTab === "csv" && csvView}
+    </div>
+  );
+
+  const alertsView = (
+    <div className="view-stack">
+      <PageHeader title={t("alerts.title")} subtitle={t("alerts.subtitle")} />
+      <StockAlertsCard inventory={inventory} onRestock={restockProduct} />
+    </div>
+  );
+
+  const content = {
+    inventory: inventoryView, add: addView, csv: csvView, today: todayView,
+    monthly: monthlyView, reports: reportsView, alerts: alertsView,
+  }[effectiveView] ?? inventoryView;
+
+  const sidebarView = effectiveView === "reports" ? reportTab : effectiveView;
+
+  // ── Top bar controls ──
+  const iconBtn = "topbar__icon";
+  const menuItem = (Icon, label, onClick, danger) => (
+    <button type="button" role="menuitem" className={`menu-item ${danger ? "menu-item--danger" : ""}`}
+      onClick={() => { setHeaderMenuOpen(false); onClick(); }}>
+      <Icon size={16} strokeWidth={2} /> {label}
+    </button>
+  );
+
+  return (
+    <div className={`dash ${isDesktop ? "dash--desktop" : "dash--mobile"}`}>
+      {isDesktop && (
+        <Sidebar
+          view={sidebarView} addTab={addTab} onNavigate={navigate}
+          onNewTransaction={() => setNewTransactionOpen(true)} canSell={inventory.length > 0}
+          isSuperAdmin={isSuperAdmin} storeName={myStore?.name ?? ""} alertCount={alertCount}
+        />
+      )}
+
+      <div className="dash__body">
+        <header className="topbar">
+          <div className="topbar__title">
+            {!isDesktop && <span className="topbar__logo"><Store size={18} /></span>}
+            <div style={{ minWidth: 0 }}>
+              <h1>{myStore?.name ?? t("owner.dashboard.myStore")}</h1>
+              <span>{myStore?.type ? `${myStore.type} · ` : ""}{user.email}</span>
+            </div>
+          </div>
+
+          <div className="topbar__controls">
+            <StoreSwitcher stores={stores} selectedStoreId={selectedStoreId} onSelect={setSelectedStoreId} />
+            <button type="button" data-tour-id="lang-theme-toggle" className={iconBtn} style={{ width: "auto", padding: "0 10px", fontSize: 11, fontWeight: 700 }}
+              onClick={() => setLanguage(language === "en" ? "tl" : "en")} aria-label={t("common.language")} title={t("common.language")}>
+              <Languages size={14} />&nbsp;{language === "en" ? "TL" : "EN"}
+            </button>
+            <button type="button" className={iconBtn} onClick={toggleTheme}
+              aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+              title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}>
+              {theme === "dark" ? <Sun size={15} strokeWidth={2.2} /> : <Moon size={15} strokeWidth={2.2} />}
+            </button>
+            <button type="button" data-tour-id="help-btn" className={iconBtn} onClick={() => setOnboardingOpen(true)}
+              aria-label={t("owner.onboarding.helpAria")} title={t("owner.onboarding.helpAria")}>
+              <HelpCircle size={16} strokeWidth={2.2} />
+            </button>
+
+            <div style={{ position: "relative" }}>
+              <button type="button" data-tour-id="edit-store-btn" className={iconBtn}
+                onClick={() => setHeaderMenuOpen((v) => !v)} aria-label={t("owner.dashboard.moreActionsAria")} aria-expanded={headerMenuOpen}>
+                <MoreVertical size={16} strokeWidth={2.2} />
+              </button>
+              {headerMenuOpen && (
+                <>
+                  <div onClick={() => setHeaderMenuOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 150 }} aria-hidden="true" />
+                  <div role="menu" className="menu">
+                    {menuItem(Plus, t("owner.dashboard.addStore"), () => setAddingStore(true))}
+                    {menuItem(Settings, t("owner.dashboard.editStoreLabel"), () => setStoreEditOpen(true))}
+                    {menuItem(Trash2, t("owner.dashboard.deleteStoreLabel"), () => setDeleteStoreConfirmOpen(true), true)}
+                    <div className="menu__sep" />
+                    {isSuperAdmin && (
+                      <a role="menuitem" className="menu-item" href="#/admin"><Shield size={16} /> {t("dash.nav.admin")}</a>
+                    )}
+                    <a role="menuitem" className="menu-item" href="#/"><MapIcon size={16} /> {t("dash.nav.viewMap")}</a>
+                    {menuItem(LogOut, t("owner.dashboard.signOut"), () => supabase.auth.signOut())}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </header>
+
+        <div className="dash__content">
+          <main className="dash__main">
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.div key={effectiveView} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }} transition={{ duration: 0.16 }}>
+                {content}
+              </motion.div>
+            </AnimatePresence>
+          </main>
+
+          {isDesktop && myStore && (
+            <aside className="dash__rail" aria-label={t("dash.rail")}>
+              <DailyCashOutCard storeId={myStore.id} refreshKey={cashRefreshKey} />
+              <NeighborhoodDemandCard storeId={myStore.id} />
+              <StockAlertsCard inventory={inventory} onRestock={restockProduct} fill />
+            </aside>
+          )}
+        </div>
+      </div>
+
+      {!isDesktop && (
+        <BottomNav
+          view={effectiveView === "csv" || effectiveView === "today" || effectiveView === "monthly" ? "reports" : effectiveView}
+          onNavigate={navigate} onNewTransaction={() => setNewTransactionOpen(true)}
+          canSell={inventory.length > 0} alertCount={alertCount}
+        />
+      )}
+
+      {/* Modals that stay modal: editing/deleting/selling a product, editing the store, new transaction. */}
+      <ProductFormModal isOpen={formModalOpen} onClose={() => setFormModalOpen(false)} storeId={myStore?.id} initialData={editingProduct} />
+      <SellModal isOpen={sellModalOpen} onClose={() => setSellModalOpen(false)} product={sellingProduct} onSold={() => setSellModalOpen(false)} />
+      <ConfirmDeleteModal isOpen={deleteModalOpen} onClose={() => setDeleteModalOpen(false)} storeId={myStore?.id} product={deletingProduct} />
       <StoreEditModal isOpen={storeEditOpen} onClose={() => setStoreEditOpen(false)} store={myStore} />
-      <BulkImportModal isOpen={bulkImportOpen} onClose={() => setBulkImportOpen(false)} storeId={myStore?.id} />
-      <NewTransactionModal
-        isOpen={newTransactionOpen}
-        onClose={() => setNewTransactionOpen(false)}
-        inventory={inventory}
-      />
-      <DailyTransactionsModal
-        isOpen={dailyModalOpen}
-        onClose={() => setDailyModalOpen(false)}
-        storeId={myStore?.id}
-        storeName={myStore?.name}
-      />
-      <MonthlyRevenueModal
-        isOpen={monthlyModalOpen}
-        onClose={() => setMonthlyModalOpen(false)}
-        storeId={myStore?.id}
-        storeName={myStore?.name}
-      />
-      <DeleteStoreConfirm
-        isOpen={deleteStoreConfirmOpen}
-        onClose={() => setDeleteStoreConfirmOpen(false)}
-        store={myStore}
-        onDeleted={() => refetchStores()}
-      />
-      <OnboardingTour
-        isOpen={onboardingOpen}
-        onClose={() => setOnboardingOpen(false)}
-        steps={OWNER_TOUR_STEPS}
-        storageKey={OWNER_TOUR_STORAGE_KEY}
-        labels={tourLabels}
-      />
-      <WhatsNewModal
-        isOpen={whatsNewOpen}
-        onClose={() => { setWhatsNewOpen(false); markChangelogSeen(CHANGELOG_VERSION); }}
-      />
+      <NewTransactionModal isOpen={newTransactionOpen} onClose={() => setNewTransactionOpen(false)} inventory={inventory} />
+      <DeleteStoreConfirm isOpen={deleteStoreConfirmOpen} onClose={() => setDeleteStoreConfirmOpen(false)} store={myStore} onDeleted={() => refetchStores()} />
+      <OnboardingTour isOpen={onboardingOpen} onClose={() => setOnboardingOpen(false)}
+        steps={OWNER_TOUR_STEPS} storageKey={OWNER_TOUR_STORAGE_KEY} labels={tourLabels} />
+      <WhatsNewModal isOpen={whatsNewOpen} onClose={() => { setWhatsNewOpen(false); markChangelogSeen(CHANGELOG_VERSION); }} />
     </div>
   );
 }
-
-
