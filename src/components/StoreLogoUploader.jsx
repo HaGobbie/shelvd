@@ -60,7 +60,12 @@ export default function StoreLogoUploader({ storeId, storeName, logoUrl, onChang
     }
   };
 
-  const showDiagnoseLink = error && ["server_not_configured", "github_upload_failed", "server_error", "db_update_failed"].includes(error.code);
+  // Show "Check what's wrong" for anything that ISN'T a client-side picture
+  // problem — i.e. any failure that could plausibly be a setup/connectivity
+  // issue, including error codes we don't specifically recognize (see the
+  // "unreachable" case in utils/storeLogo.js).
+  const CLIENT_SIDE_ONLY = ["not_image", "bad_image", "webp_unsupported", "too_large"];
+  const showDiagnoseLink = error && !CLIENT_SIDE_ONLY.includes(error.code);
 
   return (
     <div className="logo-up">

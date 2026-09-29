@@ -442,7 +442,7 @@ export default function AdminDashboard({ session }) {
                   <td>
                     <div className="cell-store">
                       <StoreAvatar name={s.name} logoUrl={s.logo_url} size={38} />
-                      <div><strong>{s.name}</strong><span>{s.type}{s.address ? ` · ${s.address}` : ""}</span></div>
+                      <div><strong>{s.name}</strong><span className="cell-store__meta">{s.type}{s.address ? ` · ${s.address}` : ""}</span></div>
                     </div>
                   </td>
                   <td>{s.owner_name}</td>
@@ -466,7 +466,7 @@ export default function AdminDashboard({ session }) {
             <div key={s.id} className="panel-card admin-scard" onClick={() => setEditingId(s.id)} role="button" tabIndex={0}>
               <div className="admin-scard__top">
                 <StoreAvatar name={s.name} logoUrl={s.logo_url} size={44} />
-                <div><strong>{s.name}</strong><span>{s.type}</span></div>
+                <div><strong>{s.name}</strong><span className="admin-scard__type">{s.type}</span></div>
                 {statusPill(s)}
               </div>
               <p className="admin-cards__line"><Mail size={12} /> {ownerLabel(s) ?? t("admin.f.unclaimed")}</p>
@@ -540,7 +540,7 @@ export default function AdminDashboard({ session }) {
     <div className={`adm ${desktop ? "adm--desktop" : ""}`}>
       {desktop && (
         <aside className="sidebar">
-          <div className="sidebar__brand"><BrandTile size={38} tone="light" /><div><strong>Shelvd</strong><span>{t("admin.console")}</span></div></div>
+          <div className="sidebar__brand"><BrandTile size={38} tone="light" /><div><strong>Shelvd</strong><span className="sidebar__brand-sub">{t("admin.console")}</span></div></div>
           <nav className="sidebar__nav">
             <span className="sidebar__group">{t("admin.manage")}</span>
             {NAV.map(([id, Icon, label]) => (
@@ -561,7 +561,7 @@ export default function AdminDashboard({ session }) {
         <header className="topbar">
           <div className="topbar__title">
             {!desktop && <BrandTile size={34} tone="dark" />}
-            <div style={{ minWidth: 0 }}><h1>{pageTitle}</h1><span>{user.email}</span></div>
+            <div style={{ minWidth: 0 }}><h1>{pageTitle}</h1><span className="topbar__subtitle">{user.email}</span></div>
           </div>
           <div className="topbar__controls">
             <button type="button" className="topbar__icon" onClick={load} disabled={loading} aria-label={t("admin.refresh")} title={t("admin.refresh")}><RefreshCw size={15} className={loading ? "regform__spin" : ""} /></button>

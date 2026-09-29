@@ -534,7 +534,7 @@ export default function OwnerDashboard({ session }) {
             <StoreAvatar name={myStore?.name ?? ""} logoUrl={myStore?.logoUrl} size={isDesktop ? 40 : 36} />
             <div style={{ minWidth: 0 }}>
               <h1>{myStore?.name ?? t("owner.dashboard.myStore")}</h1>
-              <span>{myStore?.type ? `${myStore.type} · ` : ""}{user.email}</span>
+              <span className="topbar__subtitle">{myStore?.type ? `${myStore.type} · ` : ""}{user.email}</span>
             </div>
           </div>
 

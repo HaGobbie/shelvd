@@ -60,7 +60,13 @@
   --color-border: #e7e5e4;
   --color-text-primary: #1c1917;
   --color-text-secondary: #57534e;
-  --color-text-muted: #a8a29e;
+  /* Was #a8a29e — identical to the DARK theme's value below. #a8a29e is a
+     light warm gray that reads fine on dark surfaces but has weak contrast
+     (~2.3:1) against this theme's white/near-white surfaces, especially in
+     bright daylight. #78716c (~4.6:1 on white) keeps the same "muted,
+     de-emphasized" role while staying legible outdoors. Dark theme is
+     untouched — #a8a29e is correct there. */
+  --color-text-muted: #78716c;
 
   /* Semi-transparent overlay shown while the map is loading — kept as
      its own token (not a literal rgba() on the rule itself) so dark mode
@@ -2241,5 +2247,7 @@ html[data-theme="dark"] .pform__select {
   font-size: 12.5px;
   color: var(--color-text-muted);
 }
+
+
 
 

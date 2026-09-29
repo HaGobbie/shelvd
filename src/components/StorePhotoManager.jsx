@@ -3,13 +3,14 @@
 // shown to shoppers in StoreDetails. Same WebP-in-the-browser pipeline as
 // the logo, capped at a larger 1280px/~220KB since these are viewed full-size.
 import React, { useRef, useState, useEffect, useCallback } from "react";
-import { Plus, Trash2, Loader2, ImageOff } from "lucide-react";
+import { Plus, Trash2, Loader2, ImageOff, Stethoscope, CheckCircle2, XCircle } from "lucide-react";
 import { fetchStorePhotos } from "../hooks/useStores";
-import { uploadStorePhoto, removeStorePhoto } from "../utils/storeLogo";
+import { uploadStorePhoto, removeStorePhoto, diagnosePhotoUpload } from "../utils/storeLogo";
 import { useLanguage } from "../i18n/LanguageContext";
 
 const MAX_PHOTOS = 6;
 const KNOWN_ERRORS = ["not_image", "bad_image", "webp_unsupported", "too_large", "too_many_photos", "forbidden"];
+const CLIENT_SIDE_ONLY = ["not_image", "bad_image", "webp_unsupported", "too_large", "too_many_photos"];
 
 export default function StorePhotoManager({ storeId }) {
   const { t } = useLanguage();
@@ -19,6 +20,7 @@ export default function StorePhotoManager({ storeId }) {
   const [uploading, setUploading] = useState(false);
   const [removingId, setRemovingId] = useState(null);
   const [error, setError] = useState(null);
+  const [diagnosis, setDiagnosis] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -33,13 +35,19 @@ export default function StorePhotoManager({ storeId }) {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
-    setError(null); setUploading(true);
+    setError(null); setDiagnosis(null); setUploading(true);
     try {
       const photo = await uploadStorePhoto(storeId, file);
       setPhotos((prev) => [...prev, photo]);
     } catch (err) {
       setError(err.message);
     } finally { setUploading(false); }
+  };
+
+  const runDiagnose = async () => {
+    setDiagnosis("checking");
+    try { setDiagnosis(await diagnosePhotoUpload()); }
+    catch { setDiagnosis({ ok: false, steps: [] }); }
   };
 
   const onRemove = async (photoId) => {
@@ -87,7 +95,27 @@ export default function StorePhotoManager({ storeId }) {
         </div>
       )}
       <input ref={inputRef} type="file" accept="image/*" hidden onChange={onPick} />
-      {error && <p className="logo-up__error" role="alert">{errorText(error)}</p>}
+      {error && (
+        <div className="logo-up__error-box">
+          <p className="logo-up__error" role="alert">{errorText(error)}</p>
+          {!CLIENT_SIDE_ONLY.includes(error) && (
+            <button type="button" className="logo-up__diagnose-link" onClick={runDiagnose}>
+              <Stethoscope size={13} /> {t("logo.diagnose")}
+            </button>
+          )}
+        </div>
+      )}
+      {diagnosis === "checking" && <p className="panel-card__muted">{t("logo.diagnosing")}</p>}
+      {diagnosis && diagnosis !== "checking" && (
+        <ul className="logo-up__diag">
+          {(diagnosis.steps ?? []).map((s) => (
+            <li key={s.step} className={s.ok ? "is-ok" : "is-bad"}>
+              {s.ok ? <CheckCircle2 size={14} /> : <XCircle size={14} />} {s.detail}
+            </li>
+          ))}
+          {!diagnosis.steps?.length && <li className="is-bad"><XCircle size={14} /> {t("logo.diagnoseUnreachable")}</li>}
+        </ul>
+      )}
     </div>
   );
 }

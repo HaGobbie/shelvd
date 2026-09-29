@@ -4,21 +4,53 @@
 import { supabase } from "../config/supabaseClient";
 import { imageFileToWebp, blobToBase64 } from "./imageToWebp";
 
+/**
+ * Everything below is wrapped in one try/catch on purpose. If the function
+ * isn't deployed yet, or the project ref is wrong, or CORS blocks the
+ * request, supabase-js's `invoke()` doesn't necessarily resolve with a tidy
+ * `{ error }` — it can throw/reject instead, with a raw browser message like
+ * "Failed to fetch". Un-caught, that message reached the UI as a mystery
+ * error with no "Check what's wrong" option (the exact bug reported: the
+ * button only appeared for errors the function itself returned as JSON).
+ * Now ANY failure — JSON error response or a raw network/deploy-level
+ * exception — is normalized into the same { message, detail } shape, so the
+ * uploader can always offer the diagnose button.
+ */
+function taggedError(code, detail) {
+  const err = new Error(code);
+  err.detail = detail ?? "";
+  err.isTagged = true; // marks "we deliberately built this", vs. a raw exception below
+  return err;
+}
+
 async function callFn(name, payload) {
-  const { data, error } = await supabase.functions.invoke(name, { body: payload });
-  if (error) {
+  try {
+    const { data, error } = await supabase.functions.invoke(name, { body: payload });
+    if (!error) return data;
+
     let code = "server_error";
     let detail = "";
     try {
       const body = await error.context?.json?.();
       if (body?.error) code = body.error;
       if (body?.detail) detail = body.detail;
-    } catch { /* non-JSON error body (e.g. a network-level failure) — keep the generic code */ }
-    const err = new Error(code);
-    err.detail = detail;
-    throw err;
+    } catch {
+      // The error response wasn't JSON (e.g. Supabase's own gateway 404
+      // "function not found" page) — keep the raw error text as detail.
+      detail = error.message ?? "";
+    }
+    throw taggedError(code, detail);
+  } catch (e) {
+    if (e?.isTagged) throw e;
+    // invoke() itself threw/rejected — no JSON body to read at all. This is
+    // the case the original bug fell into: a raw "Failed to fetch"-style
+    // message with no error code, so no "Check what's wrong" button ever
+    // showed. "unreachable" is deliberately NOT in the known-error-text list
+    // in StoreLogoUploader/StorePhotoManager, so it always gets the generic
+    // message PLUS the diagnose button (which itself catches this same
+    // failure mode and reports "function may not be deployed").
+    throw taggedError("unreachable", e?.message ?? String(e));
   }
-  return data;
 }
 
 /** Converts to WebP in the browser, then uploads. Resolves with the new public logo URL. */

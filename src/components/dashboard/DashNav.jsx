@@ -30,13 +30,13 @@ export function Sidebar({ view, addTab, onNavigate, onNewTransaction, canSell, i
         <BrandTile size={38} tone="light" />
         <div>
           <strong>Shelvd</strong>
-          <span>{t("dash.nav.ownerSpace")}</span>
+          <span className="sidebar__brand-sub">{t("dash.nav.ownerSpace")}</span>
         </div>
       </div>
 
       <div className="sidebar__store">
         <StoreAvatar name={storeName} logoUrl={storeLogoUrl} size={36} />
-        <span title={storeName}>{storeName}</span>
+        <span className="sidebar__store-name" title={storeName}>{storeName}</span>
       </div>
 
       <button type="button" className="sidebar__cta" onClick={onNewTransaction} disabled={!canSell} data-tour-id="new-transaction-btn">
