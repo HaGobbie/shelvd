@@ -40,7 +40,7 @@ export default function StorePhotoManager({ storeId }) {
       const photo = await uploadStorePhoto(storeId, file);
       setPhotos((prev) => [...prev, photo]);
     } catch (err) {
-      setError(err.message);
+      setError({ code: err.message, detail: err.detail });
     } finally { setUploading(false); }
   };
 
@@ -55,8 +55,8 @@ export default function StorePhotoManager({ storeId }) {
     try {
       await removeStorePhoto(storeId, photoId);
       setPhotos((prev) => prev.filter((p) => p.id !== photoId));
-    } catch {
-      setError("generic");
+    } catch (err) {
+      setError({ code: err.message, detail: err.detail });
     } finally { setRemovingId(null); }
   };
 
@@ -97,8 +97,9 @@ export default function StorePhotoManager({ storeId }) {
       <input ref={inputRef} type="file" accept="image/*" hidden onChange={onPick} />
       {error && (
         <div className="logo-up__error-box">
-          <p className="logo-up__error" role="alert">{errorText(error)}</p>
-          {!CLIENT_SIDE_ONLY.includes(error) && (
+          <p className="logo-up__error" role="alert">{errorText(error.code)}</p>
+          {error.detail && <p className="logo-up__error-detail">{error.detail}</p>}
+          {!CLIENT_SIDE_ONLY.includes(error.code) && (
             <button type="button" className="logo-up__diagnose-link" onClick={runDiagnose}>
               <Stethoscope size={13} /> {t("logo.diagnose")}
             </button>

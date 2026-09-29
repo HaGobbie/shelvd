@@ -90,6 +90,7 @@ export default function StoreLogoUploader({ storeId, storeName, logoUrl, onChang
         {error && (
           <div className="logo-up__error-box">
             <p className="logo-up__error" role="alert">{errorText(error.code)}</p>
+            {error.detail && <p className="logo-up__error-detail">{error.detail}</p>}
             {showDiagnoseLink && (
               <button type="button" className="logo-up__diagnose-link" onClick={runDiagnose}>
                 <Stethoscope size={13} /> {t("logo.diagnose")}

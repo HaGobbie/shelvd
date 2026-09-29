@@ -7,6 +7,7 @@
 export const GH_TOKEN = Deno.env.get("GITHUB_TOKEN") ?? "";
 export const GH_REPO = Deno.env.get("GITHUB_REPO") ?? "";
 export const GH_BRANCH = Deno.env.get("GITHUB_BRANCH") ?? "main";
+const FOLDER_TEST_DIR = ".shelvd-diagnostics";
 
 const ghHeaders = {
   Authorization: `Bearer ${GH_TOKEN}`,
@@ -58,8 +59,15 @@ export async function shortHash(bytes: Uint8Array) {
 /**
  * diagnose — a harmless read-only check the client can call to tell WHY
  * uploads keep failing, without needing to read the Supabase function logs.
- * Checks, in order: secrets present → token authenticates → token can see
- * the configured repo → the configured branch exists.
+ * Steps 1-4 are read-only (secrets present → token authenticates → token can
+ * see the configured repo → the configured branch exists). Step 5 is the one
+ * that actually matters for "everything above is green but uploads still
+ * fail": those first four checks can all pass even when the token can't
+ * WRITE to the repo — a fine-grained PAT's own "Contents: Read and write"
+ * permission is capped by whatever role its owner actually holds on the
+ * repo, so a token can look fully configured and still get a 403 the moment
+ * it tries to commit. Step 5 proves write access for real, by committing a
+ * tiny throwaway file and immediately deleting it again.
  */
 export async function diagnose() {
   const steps: Array<{ step: string; ok: boolean; detail: string }> = [];
@@ -68,7 +76,8 @@ export async function diagnose() {
 
   const who = await fetch("https://api.github.com/user", { headers: ghHeaders }).catch((e) => ({ ok: false, status: 0, _err: e }));
   const whoOk = "status" in who && who.status === 200;
-  steps.push({ step: "token", ok: whoOk, detail: whoOk ? "Token authenticates with GitHub." : `Token rejected by GitHub (status ${("status" in who && who.status) || "network error"}). It may be expired, revoked, or malformed.` });
+  const whoJson = whoOk ? await (who as Response).json().catch(() => ({})) : {};
+  steps.push({ step: "token", ok: whoOk, detail: whoOk ? `Token authenticates with GitHub as "${whoJson.login ?? "unknown user"}".` : `Token rejected by GitHub (status ${("status" in who && who.status) || "network error"}). It may be expired, revoked, or malformed.` });
   if (!whoOk) return { ok: false, steps };
 
   const repo = await fetch(`https://api.github.com/repos/${GH_REPO}`, { headers: ghHeaders }).catch((e) => ({ ok: false, status: 0, _err: e }));
@@ -81,6 +90,34 @@ export async function diagnose() {
   const branch = await fetch(`https://api.github.com/repos/${GH_REPO}/branches/${GH_BRANCH}`, { headers: ghHeaders }).catch((e) => ({ ok: false, status: 0, _err: e }));
   const branchOk = "status" in branch && branch.status === 200;
   steps.push({ step: "branch", ok: branchOk, detail: branchOk ? `Branch "${GH_BRANCH}" exists.` : `Branch "${GH_BRANCH}" not found (repo's default branch is "${defaultBranch}"). Set GITHUB_BRANCH="${defaultBranch}" or create a "${GH_BRANCH}" branch.` });
+  if (!branchOk) return { ok: false, steps };
+
+  // A fine-grained token's own permission setting ("Contents: Read and
+  // write") is a CEILING, not a guarantee — GitHub still checks it against
+  // the token owner's actual role on the repo. If that account only has
+  // read/triage access, GitHub reports it right here even before we try
+  // writing anything.
+  const collab = repoJson.permissions ?? {};
+  if (collab.push === false) {
+    steps.push({ step: "collaborator_role", ok: false, detail: `"${whoJson.login}" does not have write (push) access to ${GH_REPO} on GitHub itself — a token can't grant more access than its owner already has. Add that account as a collaborator with at least "Write" role (repo Settings → Collaborators), or generate the token from an account/org that already has it.` });
+    return { ok: false, steps };
+  }
+
+  // The only check that actually proves a commit will succeed: do one, for
+  // real, then remove it immediately. Everything above can be green while
+  // this still fails (wrong token scope in a way GitHub's read APIs don't
+  // surface, branch protection rules, a suspended app installation, etc).
+  const testPath = `${FOLDER_TEST_DIR}/.shelvd-write-test-${Date.now()}.txt`;
+  const testBytes = new TextEncoder().encode("Shelvd write-access test — safe to delete.");
+  const put = await putFile(testPath, testBytes, "Shelvd: verifying write access (temporary file)").catch((e) => ({ ok: false, status: 0, _err: e }));
+  const putOk = "status" in put && (put as Response).ok;
+  if (!putOk) {
+    const body = "text" in (put as Response) ? await (put as Response).text().catch(() => "") : String((put as any)._err ?? "");
+    steps.push({ step: "write_test", ok: false, detail: `A real test commit failed (status ${("status" in put && put.status) || "network error"}). GitHub said: ${body || "no further detail."} This usually means the token's Contents permission wasn't actually saved, or a branch protection rule on "${GH_BRANCH}" is blocking commits.` });
+    return { ok: false, steps };
+  }
+  await deleteFile(testPath, "Shelvd: removing write-access test file").catch(() => {});
+  steps.push({ step: "write_test", ok: true, detail: `Committed and removed a real test file on "${GH_BRANCH}" successfully — GitHub write access is working.` });
 
   return { ok: steps.every((s) => s.ok), steps };
 }
