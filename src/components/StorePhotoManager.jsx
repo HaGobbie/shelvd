@@ -1,0 +1,93 @@
+// src/components/StorePhotoManager.jsx
+// Owner-facing "what does your store look like" gallery — up to 6 photos,
+// shown to shoppers in StoreDetails. Same WebP-in-the-browser pipeline as
+// the logo, capped at a larger 1280px/~220KB since these are viewed full-size.
+import React, { useRef, useState, useEffect, useCallback } from "react";
+import { Plus, Trash2, Loader2, ImageOff } from "lucide-react";
+import { fetchStorePhotos } from "../hooks/useStores";
+import { uploadStorePhoto, removeStorePhoto } from "../utils/storeLogo";
+import { useLanguage } from "../i18n/LanguageContext";
+
+const MAX_PHOTOS = 6;
+const KNOWN_ERRORS = ["not_image", "bad_image", "webp_unsupported", "too_large", "too_many_photos", "forbidden"];
+
+export default function StorePhotoManager({ storeId }) {
+  const { t } = useLanguage();
+  const inputRef = useRef(null);
+  const [photos, setPhotos] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const [removingId, setRemovingId] = useState(null);
+  const [error, setError] = useState(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setPhotos(await fetchStorePhotos(storeId));
+    setLoading(false);
+  }, [storeId]);
+  useEffect(() => { if (storeId) load(); }, [storeId, load]);
+
+  const errorText = (code) => t(`photos.err.${KNOWN_ERRORS.includes(code) ? code : "generic"}`);
+
+  const onPick = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setError(null); setUploading(true);
+    try {
+      const photo = await uploadStorePhoto(storeId, file);
+      setPhotos((prev) => [...prev, photo]);
+    } catch (err) {
+      setError(err.message);
+    } finally { setUploading(false); }
+  };
+
+  const onRemove = async (photoId) => {
+    setError(null); setRemovingId(photoId);
+    try {
+      await removeStorePhoto(storeId, photoId);
+      setPhotos((prev) => prev.filter((p) => p.id !== photoId));
+    } catch {
+      setError("generic");
+    } finally { setRemovingId(null); }
+  };
+
+  const atMax = photos.length >= MAX_PHOTOS;
+
+  return (
+    <div className="photo-mgr">
+      <div className="photo-mgr__head">
+        <strong>{t("photos.title")}</strong>
+        <span>{t("photos.count", photos.length, MAX_PHOTOS)}</span>
+      </div>
+      <p className="photo-mgr__hint">{t("photos.hint")}</p>
+
+      {loading ? (
+        <div className="photo-mgr__loading"><Loader2 size={20} className="regform__spin" /></div>
+      ) : (
+        <div className="photo-mgr__grid">
+          {photos.map((p) => (
+            <div key={p.id} className="photo-mgr__tile">
+              <img src={p.url} alt="" loading="lazy" />
+              <button type="button" className="photo-mgr__remove" disabled={removingId === p.id}
+                onClick={() => onRemove(p.id)} aria-label={t("photos.remove")}>
+                {removingId === p.id ? <Loader2 size={14} className="regform__spin" /> : <Trash2 size={14} />}
+              </button>
+            </div>
+          ))}
+          {!atMax && (
+            <button type="button" className="photo-mgr__add" disabled={uploading} onClick={() => inputRef.current?.click()}>
+              {uploading ? <Loader2 size={20} className="regform__spin" /> : <Plus size={22} />}
+              <span>{t("photos.add")}</span>
+            </button>
+          )}
+          {photos.length === 0 && !uploading && (
+            <div className="photo-mgr__empty-note"><ImageOff size={14} /> {t("photos.none")}</div>
+          )}
+        </div>
+      )}
+      <input ref={inputRef} type="file" accept="image/*" hidden onChange={onPick} />
+      {error && <p className="logo-up__error" role="alert">{errorText(error)}</p>}
+    </div>
+  );
+}

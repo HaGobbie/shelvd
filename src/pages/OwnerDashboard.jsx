@@ -24,7 +24,7 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  AlertTriangle, Package, Plus, Pencil, Trash2, Settings, ChevronDown, X, ShoppingCart,
+  AlertTriangle, Plus, Pencil, Trash2, Settings, ChevronDown, X, ShoppingCart,
   FileDown, Languages, Sun, Moon, HelpCircle, MoreVertical, Store, Shield, Map as MapIcon,
   PackagePlus, UploadCloud, Search, LogOut,
 } from "lucide-react";
@@ -40,6 +40,9 @@ import { removeStoreLogo } from "../utils/storeLogo";
 import ProductCard from "../components/dashboard/ProductCard";
 import { Sidebar, BottomNav } from "../components/dashboard/DashNav";
 import { DailyCashOutCard, NeighborhoodDemandCard, StockAlertsCard } from "../components/dashboard/InsightCards";
+import FirstProductCTA from "../components/dashboard/FirstProductCTA";
+import SyncStatus from "../components/dashboard/SyncStatus";
+import LanguageChooserModal, { hasSeenLanguagePrompt } from "../components/LanguageChooserModal";
 import ProductFormModal from "../components/ProductFormModal";
 import ConfirmDeleteModal from "../components/ConfirmDeleteModal";
 import StoreRegistrationForm from "../components/StoreRegistrationForm";
@@ -287,6 +290,7 @@ export default function OwnerDashboard({ session }) {
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
   const [whatsNewOpen, setWhatsNewOpen] = useState(false);
+  const [langPromptOpen, setLangPromptOpen] = useState(false);
 
   useEffect(() => {
     if (!user || !storesChecked || storesLoading) return;
@@ -296,6 +300,10 @@ export default function OwnerDashboard({ session }) {
     } else if (getLastSeenChangelogVersion() < CHANGELOG_VERSION) {
       setWhatsNewOpen(true);
     }
+    // Language prompt intentionally waits for the tour to be dismissed
+    // first (handled in the onboarding onClose below) rather than firing
+    // here, so a first-time owner never sees two full-screen prompts race.
+    if (hasSeenTour(OWNER_TOUR_STORAGE_KEY) && !hasSeenLanguagePrompt()) setLangPromptOpen(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, storesChecked, storesLoading]);
 
@@ -422,13 +430,7 @@ export default function OwnerDashboard({ session }) {
       <p className="dashboard-hint">{t("owner.dashboard.hint")}</p>
 
       {inventory.length === 0 && (
-        <div className="dashboard-empty">
-          <Package size={40} style={{ opacity: 0.3 }} />
-          <span>{t("owner.dashboard.noProducts")}</span>
-          <button type="button" className="btn btn--primary" onClick={() => navigate("add", "single")}>
-            <Plus size={16} /> {t("owner.dashboard.addFirstProduct")}
-          </button>
-        </div>
+        <FirstProductCTA onAddSingle={() => navigate("add", "single")} onAddMany={() => navigate("add", "many")} />
       )}
       {inventory.length > 0 && filteredInventory.length === 0 && (
         <div className="dashboard-empty">{t("owner.dashboard.noMatch", filterQuery)}</div>
@@ -547,6 +549,7 @@ export default function OwnerDashboard({ session }) {
               title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}>
               {theme === "dark" ? <Sun size={15} strokeWidth={2.2} /> : <Moon size={15} strokeWidth={2.2} />}
             </button>
+            <SyncStatus />
             <button type="button" data-tour-id="help-btn" className={iconBtn} onClick={() => setOnboardingOpen(true)}
               aria-label={t("owner.onboarding.helpAria")} title={t("owner.onboarding.helpAria")}>
               <HelpCircle size={16} strokeWidth={2.2} />
@@ -612,9 +615,10 @@ export default function OwnerDashboard({ session }) {
       <StoreEditModal isOpen={storeEditOpen} onClose={() => setStoreEditOpen(false)} store={myStore} />
       <NewTransactionModal isOpen={newTransactionOpen} onClose={() => setNewTransactionOpen(false)} inventory={inventory} />
       <DeleteStoreConfirm isOpen={deleteStoreConfirmOpen} onClose={() => setDeleteStoreConfirmOpen(false)} store={myStore} onDeleted={() => refetchStores()} />
-      <OnboardingTour isOpen={onboardingOpen} onClose={() => setOnboardingOpen(false)}
+      <OnboardingTour isOpen={onboardingOpen} onClose={() => { setOnboardingOpen(false); if (!hasSeenLanguagePrompt()) setLangPromptOpen(true); }}
         steps={OWNER_TOUR_STEPS} storageKey={OWNER_TOUR_STORAGE_KEY} labels={tourLabels} />
       <WhatsNewModal isOpen={whatsNewOpen} onClose={() => { setWhatsNewOpen(false); markChangelogSeen(CHANGELOG_VERSION); }} />
+      <LanguageChooserModal isOpen={langPromptOpen} onDone={() => setLangPromptOpen(false)} />
     </div>
   );
 }

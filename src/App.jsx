@@ -25,6 +25,8 @@ import { ResetPasswordScreen } from "./components/AuthScreen";
 import ShoppingListSheet from "./components/ShoppingListSheet";
 import RoutePlanner from "./components/RoutePlanner";
 import { ShoppingListProvider, useShoppingList } from "./hooks/useShoppingList";
+import LanguageChooserModal, { hasSeenLanguagePrompt } from "./components/LanguageChooserModal";
+import { InstallBanner, InstallLauncher } from "./components/InstallPrompt";
 import { useMapMarkers, useStoreDetails, useDebouncedSearchMatches } from "./hooks/useStores";
 import { useOnlineStatus } from "./hooks/useOnlineStatus";
 import { supabase } from "./config/supabaseClient";
@@ -37,6 +39,7 @@ import { MAP_TOUR_STEPS, MAP_TOUR_STORAGE_KEY } from "./tours/mapTourSteps";
 import "./styles/App.css";
 import "./styles/shelvd-v2.css";
 import "./styles/shelvd-v3.css";
+import "./styles/shelvd-v4.css";
 
 // ─── OAuth hash sanitizer ─────────────────────────────────────────────────
 // Runs ONCE, at module load — before the App component ever renders, and
@@ -139,6 +142,17 @@ function AppShell() {
   const { theme, toggleTheme } = useTheme();
   const isOnline = useOnlineStatus();
   const { pendingCount, setListOpen } = useShoppingList();
+
+  // First-launch language prompt for plain map visitors (owners get this
+  // AFTER their onboarding tour instead — see OwnerDashboard.jsx — so the
+  // two never show back-to-back for the same person).
+  const [langPromptOpen, setLangPromptOpen] = useState(false);
+  useEffect(() => {
+    if (route !== "#/dashboard" && route !== "#/admin" && !hasSeenLanguagePrompt()) {
+      const id = setTimeout(() => setLangPromptOpen(true), 900);
+      return () => clearTimeout(id);
+    }
+  }, [route]);
 
   // ─── Global Supabase auth session ────────────────────────────────────────
   const [session, setSession] = useState(null);
@@ -435,6 +449,10 @@ function AppShell() {
         searchQuery={searchQuery}
         onClose={handleSheetClose}
       />
+
+      <LanguageChooserModal isOpen={langPromptOpen} onDone={() => setLangPromptOpen(false)} />
+      <InstallBanner />
+      <InstallLauncher style={{ position: "fixed", left: 16, bottom: "calc(16px + env(safe-area-inset-bottom, 0px))", zIndex: 150 }} />
 
       {/* Shopping list FAB — top of the right-hand stack: store FAB (24px) →
           locate-me button (92px, MapContainer.jsx) → this one (160px). It used to sit at

@@ -16,6 +16,8 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "../config/supabaseClient";
+import { registerInventory, getCachedInventory, getProductSnapshot } from "../utils/offlineRegistry";
+import { isLikelyOffline, isNetworkError, queueStockAdjustment, queueSale, queueMultiSale } from "../utils/offlineQueue";
 
 // ─── Mapping helpers (DB row <-> app-shape object) ──────────────────────────
 
@@ -388,8 +390,13 @@ export async function deleteStore(storeId) {
 // ─── useOwnerInventory ───────────────────────────────────────────────────────
 
 export function useOwnerInventory(storeId) {
-  const [inventory, setInventory] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // Hydrate synchronously from the last-known cache (offlineRegistry.js) so
+  // opening the dashboard with no signal still shows real data immediately,
+  // instead of an empty list until a network request that will never
+  // resolve. If we do have a signal, the fetch below replaces this within
+  // a moment anyway.
+  const [inventory, setInventory] = useState(() => getCachedInventory(storeId) ?? []);
+  const [loading, setLoading] = useState(() => !getCachedInventory(storeId));
 
   useEffect(() => {
     if (!storeId) {
@@ -399,19 +406,32 @@ export function useOwnerInventory(storeId) {
     }
 
     let isMounted = true;
-    setLoading(true);
+    const cached = getCachedInventory(storeId);
+    if (cached) { setInventory(cached); registerInventory(storeId, cached); setLoading(false); }
+    else setLoading(true);
 
     supabase
       .from("inventory")
       .select("id, store_id, name, category, price, status, quantity, low_stock_threshold, sku, description, unit, last_updated, is_service")
       .eq("store_id", storeId)
       .order("name", { ascending: true })
-      .then(({ data }) => {
-        if (isMounted) {
-          setInventory((data ?? []).map(mapProductRow));
-          setLoading(false);
-        }
-      });
+      .then(({ data, error }) => {
+        if (!isMounted || error) return; // offline fetch failure: keep showing the cached list above
+        const mapped = data.map(mapProductRow);
+        setInventory(mapped);
+        setLoading(false);
+        registerInventory(storeId, mapped);
+      })
+      .catch(() => { /* offline — cached list (if any) stays on screen */ });
+
+    // Optimistic updates from queued offline actions (offlineRegistry.js /
+    // offlineQueue.js) land here so the UI reflects them instantly, without
+    // waiting for the realtime channel below (which needs a connection).
+    const onDelta = (e) => {
+      if (e.detail?.storeId !== storeId) return;
+      setInventory((prev) => prev.map((p) => (p.id === e.detail.productId ? { ...p, quantity: e.detail.quantity, status: e.detail.status, lastUpdated: new Date().toISOString() } : p)));
+    };
+    window.addEventListener("shelvd:inventory-delta", onDelta);
 
     const channel = supabase
       .channel(`owner-inventory-${storeId}`)
@@ -435,9 +455,17 @@ export function useOwnerInventory(storeId) {
 
     return () => {
       isMounted = false;
+      window.removeEventListener("shelvd:inventory-delta", onDelta);
       supabase.removeChannel(channel);
     };
   }, [storeId]);
+
+  // Keep the offline cache/registry in sync with whatever's on screen,
+  // including realtime pushes from OTHER devices/tabs, not just this hook's
+  // own fetch — so the cache used for the next offline session is accurate.
+  useEffect(() => {
+    if (storeId && inventory.length) registerInventory(storeId, inventory);
+  }, [storeId, inventory]);
 
   // NOTE: there is deliberately NO plain "updateProductQuantity" helper
   // here anymore. One used to exist as a direct `.update({quantity})`
@@ -589,10 +617,16 @@ export async function nearbyStores(lat, lng, radiusMeters = 5000) {
  * @returns {Promise<{data: {new_quantity: number, earnings: number}[]|null, error: Error|null}>}
  */
 export async function recordSale(productId, quantitySold) {
+  const snapshot = getProductSnapshot(productId);
+  if (isLikelyOffline() && snapshot) return queueSale(snapshot, productId, quantitySold);
+
   const { data, error } = await supabase.rpc("record_sale", {
     p_product_id: productId,
     p_quantity_sold: quantitySold,
   });
+  // The network check itself failed (not the server rejecting the request) —
+  // fall back to the offline queue if we have enough info to do so safely.
+  if (error && isNetworkError(error) && snapshot) return queueSale(snapshot, productId, quantitySold);
   return { data, error };
 }
 
@@ -609,6 +643,10 @@ export async function recordSale(productId, quantitySold) {
  * @param {string} [notes] — one shared note for the whole transaction
  */
 export async function recordMultiSale(lineItems, notes = null) {
+  const snapshots = lineItems.map((item) => ({ productId: item.productId, ...(getProductSnapshot(item.productId) ?? {}) }));
+  const haveAllSnapshots = snapshots.every((s) => s.storeId);
+  if (isLikelyOffline() && haveAllSnapshots) return queueMultiSale(snapshots, lineItems, notes);
+
   const payload = lineItems.map((item) => ({
     product_id: item.productId,
     quantity: item.quantity,
@@ -617,6 +655,7 @@ export async function recordMultiSale(lineItems, notes = null) {
     p_line_items: payload,
     p_notes: notes,
   });
+  if (error && isNetworkError(error) && haveAllSnapshots) return queueMultiSale(snapshots, lineItems, notes);
   return { data, error };
 }
 
@@ -633,13 +672,32 @@ export async function recordMultiSale(lineItems, notes = null) {
  * @param {string} [notes]
  */
 export async function recordStockAdjustment(productId, newQuantity, transactionType, notes = null) {
+  const snapshot = getProductSnapshot(productId);
+  if (isLikelyOffline() && snapshot) return queueStockAdjustment(snapshot, productId, newQuantity, transactionType, notes);
+
   const { data, error } = await supabase.rpc("record_stock_adjustment", {
     p_product_id: productId,
     p_new_quantity: newQuantity,
     p_transaction_type: transactionType,
     p_notes: notes,
   });
+  if (error && isNetworkError(error) && snapshot) return queueStockAdjustment(snapshot, productId, newQuantity, transactionType, notes);
   return { data, error };
+}
+
+/**
+ * fetchStorePhotos — "what the store looks like" gallery (sql/032). Public
+ * (approved stores) and the owner (any status) can read; only the
+ * upload-store-photo Edge Function can write.
+ */
+export async function fetchStorePhotos(storeId) {
+  const { data, error } = await supabase
+    .from("store_photos")
+    .select("id, photo_url, position")
+    .eq("store_id", storeId)
+    .order("position", { ascending: true });
+  if (error) { console.error("fetchStorePhotos failed:", error); return []; }
+  return (data ?? []).map((r) => ({ id: r.id, url: r.photo_url, position: r.position }));
 }
 
 /**

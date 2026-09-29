@@ -1,53 +1,66 @@
 // src/components/StoreLogoUploader.jsx
-// Pick / replace / remove a store's logo. Saves immediately (it doesn't wait
-// for the rest of the edit form's Save button). Used in the owner's Edit Store
-// dialog and in the super-admin store drawer.
+// Pick / replace / remove a store's logo. Saves immediately.
+//
+// If an upload fails, "Check what's wrong" calls the Edge Function's
+// read-only diagnose action (githubStorage.ts) and shows exactly which
+// setup step is missing — no Supabase log access needed to self-fix.
 import React, { useRef, useState, useEffect } from "react";
-import { ImagePlus, Trash2, Loader2, RefreshCw } from "lucide-react";
+import { ImagePlus, Trash2, Loader2, RefreshCw, Stethoscope, CheckCircle2, XCircle } from "lucide-react";
 import StoreAvatar from "./StoreAvatar";
-import { uploadStoreLogo, removeStoreLogo } from "../utils/storeLogo";
+import { uploadStoreLogo, removeStoreLogo, diagnoseLogoUpload } from "../utils/storeLogo";
 import { useLanguage } from "../i18n/LanguageContext";
+
+const KNOWN_ERRORS = ["not_image", "bad_image", "webp_unsupported", "too_large", "forbidden", "unauthorized"];
 
 export default function StoreLogoUploader({ storeId, storeName, logoUrl, onChanged }) {
   const { t } = useLanguage();
   const inputRef = useRef(null);
   const [current, setCurrent] = useState(logoUrl ?? null);
-  const [busy, setBusy] = useState(null); // "upload" | "remove" | null
-  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(null);
+  const [error, setError] = useState(null); // { code, detail }
+  const [diagnosis, setDiagnosis] = useState(null); // { ok, steps } | "checking"
 
   useEffect(() => setCurrent(logoUrl ?? null), [logoUrl]);
 
-  const errorText = (code) => {
-    const known = ["not_image", "bad_image", "webp_unsupported", "too_large", "forbidden", "unauthorized"];
-    return t(`logo.err.${known.includes(code) ? code : "generic"}`);
-  };
+  const errorText = (code) => t(`logo.err.${KNOWN_ERRORS.includes(code) ? code : "generic"}`);
 
   const onPick = async (e) => {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
-    setError(""); setBusy("upload");
+    setError(null); setDiagnosis(null); setBusy("upload");
     try {
       const url = await uploadStoreLogo(storeId, file);
       setCurrent(url);
       onChanged?.(url);
     } catch (err) {
-      console.error("logo upload failed:", err);
-      setError(errorText(err.message));
+      console.error("logo upload failed:", err.message, err.detail);
+      setError({ code: err.message, detail: err.detail });
     } finally { setBusy(null); }
   };
 
   const onRemove = async () => {
-    setError(""); setBusy("remove");
+    setError(null); setDiagnosis(null); setBusy("remove");
     try {
       await removeStoreLogo(storeId);
       setCurrent(null);
       onChanged?.(null);
     } catch (err) {
-      console.error("logo remove failed:", err);
-      setError(errorText(err.message));
+      console.error("logo remove failed:", err.message);
+      setError({ code: err.message });
     } finally { setBusy(null); }
   };
+
+  const runDiagnose = async () => {
+    setDiagnosis("checking");
+    try {
+      setDiagnosis(await diagnoseLogoUpload());
+    } catch {
+      setDiagnosis({ ok: false, steps: [] });
+    }
+  };
+
+  const showDiagnoseLink = error && ["server_not_configured", "github_upload_failed", "server_error", "db_update_failed"].includes(error.code);
 
   return (
     <div className="logo-up">
@@ -69,7 +82,27 @@ export default function StoreLogoUploader({ storeId, storeName, logoUrl, onChang
             </button>
           )}
         </div>
-        {error && <p className="logo-up__error" role="alert">{error}</p>}
+        {error && (
+          <div className="logo-up__error-box">
+            <p className="logo-up__error" role="alert">{errorText(error.code)}</p>
+            {showDiagnoseLink && (
+              <button type="button" className="logo-up__diagnose-link" onClick={runDiagnose}>
+                <Stethoscope size={13} /> {t("logo.diagnose")}
+              </button>
+            )}
+          </div>
+        )}
+        {diagnosis === "checking" && <p className="panel-card__muted">{t("logo.diagnosing")}</p>}
+        {diagnosis && diagnosis !== "checking" && (
+          <ul className="logo-up__diag">
+            {(diagnosis.steps ?? []).map((s) => (
+              <li key={s.step} className={s.ok ? "is-ok" : "is-bad"}>
+                {s.ok ? <CheckCircle2 size={14} /> : <XCircle size={14} />} {s.detail}
+              </li>
+            ))}
+            {!diagnosis.steps?.length && <li className="is-bad"><XCircle size={14} /> {t("logo.diagnoseUnreachable")}</li>}
+          </ul>
+        )}
       </div>
     </div>
   );

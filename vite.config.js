@@ -51,6 +51,15 @@ export default defineConfig({
         ],
       },
       workbox: {
+        // Lets the app itself (HTML/JS/CSS shell) open with no signal at
+        // all — e.g. the owner launches the installed PWA on a jeepney with
+        // no data. Cross-origin requests (Supabase, GitHub-hosted logos/
+        // photos, map tiles) are never matched by navigateFallback, so this
+        // only ever serves the app shell for same-origin page loads; actual
+        // data still needs a connection (or the offline sales queue, see
+        // src/utils/offlineQueue.js).
+        navigateFallback: `/${REPO_NAME}/index.html`,
+        navigateFallbackDenylist: [/^\/${REPO_NAME}\/functions\//],
         runtimeCaching: [
           {
             // Matches BOTH light_all and dark_all — dark mode was added
@@ -86,3 +95,5 @@ export default defineConfig({
     outDir: "dist",
   },
 });
+
+

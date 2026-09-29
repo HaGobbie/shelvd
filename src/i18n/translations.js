@@ -14,6 +14,29 @@
 
 export const translations = {
   en: {
+    firstProduct: {
+      title: "Add your first product", body: "Your shop won't show up for neighbors until it has at least one product listed. It only takes a minute.",
+      addOne: "Add a product", scanReceipt: "Or scan a receipt instead",
+    },
+    freshness: { stale: "Stale" },
+    photos: {
+      title: "Store photos", count: (n, max) => `${n} of ${max}`, hint: "Show what your store looks like so neighbors recognize it. Optional.",
+      add: "Add photo", remove: "Remove photo", none: "No photos yet.", galleryTitle: "Photos of this store",
+      viewPhoto: (n) => `View photo ${n}`, prev: "Previous photo", next: "Next photo",
+      err: { not_image: "That file isn't a picture.", bad_image: "Couldn't read that picture. Try another.", webp_unsupported: "This browser can't prepare the picture. Try Chrome, Edge or Firefox.",
+        too_large: "The picture is still too large.", too_many_photos: "You've reached the 6-photo limit. Remove one first.", forbidden: "You don't have permission to do that.", generic: "Couldn't save the photo. Please try again." },
+    },
+    logo_diag: {},
+    sync: {
+      type: { stockAdjustment: "Stock update", sale: "Sale", multiSale: "Sale" },
+      syncing: (n) => `Syncing ${n} change${n !== 1 ? "s" : ""}…`, waiting: (n) => `${n} change${n !== 1 ? "s" : ""} waiting for signal`,
+      someFailed: (n) => `${n} couldn't sync`, panelTitle: "Offline changes", offlineNote: "You're offline — these will sync once you're back online.",
+      genericError: "Couldn't sync — tap to review.", discard: "Discard", discardAll: "Discard failed", syncNow: "Sync now",
+    },
+    install: {
+      title: "Install Shelvd", body: "Add it to your home screen for one-tap access, even with a weak signal.", action: "Install",
+      iosStep1: "Tap the Share button", iosStep2: "then", iosStep2b: "Add to Home Screen",
+    },
     logo: {
       title: "Store logo", hasLogo: "Shown on the map and in your dashboard. Replacing it removes the old picture.",
       noLogo: "Optional. Add your store's logo so neighbors recognize you. Any photo works — we shrink it automatically.",
@@ -25,8 +48,9 @@ export const translations = {
         too_large: "The picture is still too large. Try a smaller one.",
         forbidden: "You don't have permission to change this store's logo.",
         unauthorized: "Please sign in again and retry.",
-        generic: "Couldn't save the logo. Please try again in a moment.",
+        generic: "Couldn't save the logo — something went wrong on the server side.",
       },
+      diagnose: "Check what's wrong", diagnosing: "Checking connection to GitHub…", diagnoseUnreachable: "Couldn't reach the diagnostic check itself — the function may not be deployed.",
     },
     revenue: {
       subtitle: "Sales by month and best sellers", chartAria: "Monthly sales chart, tap a bar to choose a month",
@@ -624,6 +648,28 @@ export const translations = {
   },
 
   tl: {
+    firstProduct: {
+      title: "Idagdag ang unang produkto", body: "Hindi makikita ang tindahan mo ng mga kapitbahay hangga't wala pang naka-listang produkto. Isang minuto lang ito.",
+      addOne: "Magdagdag ng produkto", scanReceipt: "O mag-scan na lang ng resibo",
+    },
+    freshness: { stale: "Luma na" },
+    photos: {
+      title: "Larawan ng tindahan", count: (n, max) => `${n} sa ${max}`, hint: "Ipakita kung ano ang itsura ng tindahan mo para makilala ito ng mga kapitbahay. Opsyonal.",
+      add: "Magdagdag ng larawan", remove: "Alisin ang larawan", none: "Wala pang larawan.", galleryTitle: "Mga larawan ng tindahang ito",
+      viewPhoto: (n) => `Tingnan ang larawan ${n}`, prev: "Nakaraang larawan", next: "Susunod na larawan",
+      err: { not_image: "Hindi larawan ang file na iyan.", bad_image: "Hindi mabasa ang larawan. Subukan ang iba.", webp_unsupported: "Hindi ito maihanda ng browser na ito. Subukan ang Chrome, Edge o Firefox.",
+        too_large: "Masyado pa ring malaki ang larawan.", too_many_photos: "Naabot na ang limitasyong 6 na larawan. Mag-alis muna ng isa.", forbidden: "Wala kang pahintulot na gawin iyan.", generic: "Hindi na-save ang larawan. Subukan ulit." },
+    },
+    sync: {
+      type: { stockAdjustment: "Pagbabago ng stock", sale: "Benta", multiSale: "Benta" },
+      syncing: (n) => `Sine-sync ang ${n} pagbabago…`, waiting: (n) => `${n} pagbabago ang naghihintay ng signal`,
+      someFailed: (n) => `${n} ang hindi na-sync`, panelTitle: "Mga offline na pagbabago", offlineNote: "Offline ka — mase-sync ito kapag online ka na.",
+      genericError: "Hindi na-sync — pindutin para tingnan.", discard: "Alisin", discardAll: "Alisin ang nabigo", syncNow: "I-sync ngayon",
+    },
+    install: {
+      title: "I-install ang Shelvd", body: "Idagdag sa home screen para sa mabilisang access, kahit mahina ang signal.", action: "I-install",
+      iosStep1: "Pindutin ang Share button", iosStep2: "tapos", iosStep2b: "Add to Home Screen",
+    },
     logo: {
       title: "Logo ng tindahan", hasLogo: "Makikita sa mapa at sa dashboard mo. Kapag pinalitan, mabubura ang lumang larawan.",
       noLogo: "Opsyonal. Magdagdag ng logo para makilala ka ng mga kapitbahay. Kahit anong litrato — awtomatiko naming liliitan.",
@@ -635,8 +681,9 @@ export const translations = {
         too_large: "Masyado pa ring malaki ang larawan. Subukan ang mas maliit.",
         forbidden: "Wala kang pahintulot na palitan ang logo ng tindahang ito.",
         unauthorized: "Mag-sign in ulit at subukan muli.",
-        generic: "Hindi na-save ang logo. Subukan ulit mamaya.",
+        generic: "Hindi na-save ang logo — may nangyaring problema sa server.",
       },
+      diagnose: "Suriin ang problema", diagnosing: "Sinusuri ang koneksyon sa GitHub…", diagnoseUnreachable: "Hindi maabot ang diagnostic check mismo — baka hindi pa deployed ang function.",
     },
     revenue: {
       subtitle: "Benta kada buwan at pinakamabenta", chartAria: "Tsart ng buwanang benta, pindutin ang bar para pumili ng buwan",

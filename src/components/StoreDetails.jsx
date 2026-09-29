@@ -6,13 +6,16 @@
 
 import React, { useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, MapPin, Phone, Clock, Package, Navigation, ExternalLink, Plus, Check, ShoppingBasket } from "lucide-react";
+import { X, MapPin, Phone, Package, Navigation, ExternalLink, Plus, Check, ShoppingBasket } from "lucide-react";
 import { formatLastUpdated, formatPrice } from "../hooks/useStores";
 import { useLanguage } from "../i18n/LanguageContext";
 import { buildGoogleMapsViewLink } from "../utils/googleMapsLink";
 import { SERVICE_CATEGORY_EMOJI } from "../constants/productCategories";
 import { useShoppingList } from "../hooks/useShoppingList";
 import StoreAvatar from "./StoreAvatar";
+import FreshnessBadge from "./FreshnessBadge";
+import StorePhotoGallery from "./StorePhotoGallery";
+import { freshnessLevel, mostRecentUpdate } from "../utils/freshness";
 
 // ─── Status badge config ──────────────────────────────────────────────────────
 // Colors reference CSS custom properties (defined in :root, App.css)
@@ -232,10 +235,7 @@ function ProductRow({ product, searchQuery, store }) {
           {formatPrice(product.price)}
         </span>
         <StatusBadge status={product.status} />
-        <span className="product-row__timestamp">
-          <Clock size={11} />
-          &nbsp;{formatLastUpdated(product.lastUpdated)}
-        </span>
+        <FreshnessBadge lastUpdated={product.lastUpdated} />
       </div>
       <AddToListButton product={product} store={store} />
     </div>
@@ -329,6 +329,9 @@ export default function StoreDetails({ store, searchQuery = "", onClose }) {
               <div className="sheet-header__info" style={{ marginLeft: 12 }}>
                 <h2 className="sheet-header__name">{store?.name}</h2>
                 <span className="sheet-header__type">{store?.type}</span>
+                {store?.inventory?.length > 0 && (
+                  <FreshnessBadge lastUpdated={mostRecentUpdate(store.inventory)} showDot={false} />
+                )}
               </div>
               <button
                 className="sheet-close-btn"
@@ -440,6 +443,8 @@ export default function StoreDetails({ store, searchQuery = "", onClose }) {
                 </div>
               )}
             </div>
+
+            <StorePhotoGallery storeId={store?.id} />
 
             {/* Search match summary */}
             {searchQuery.trim() && matchedProducts.length > 0 && (

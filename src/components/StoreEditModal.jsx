@@ -55,6 +55,7 @@ import { useLanguage } from "../i18n/LanguageContext";
 import { useTheme } from "../theme/ThemeContext";
 import { getTileUrl, TILE_ATTRIBUTION } from "../config/mapTiles";
 import StoreLogoUploader from "./StoreLogoUploader";
+import StorePhotoManager from "./StorePhotoManager";
 import { sanitizePhoneInput, normalizePHPhone, phoneProblem, PH_PHONE_LENGTH } from "../utils/phone";
 
 // ─── Leaflet icon fix ─────────────────────────────────────────────────────────
@@ -392,6 +393,7 @@ export default function StoreEditModal({ isOpen, onClose, store }) {
               {activeTab === "details" && (
                 <div>
                   <StoreLogoUploader storeId={store.id} storeName={store.name} logoUrl={store.logoUrl} />
+                  <StorePhotoManager storeId={store.id} />
                   <div className="regform__field">
                     <label className="regform__label" htmlFor="se-name">
                       {t("owner.storeEdit.nameLabel")} <span className="pform__required">*</span>
