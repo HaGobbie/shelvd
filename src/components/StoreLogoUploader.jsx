@@ -54,7 +54,7 @@ export default function StoreLogoUploader({ storeId, storeName, logoUrl, onChang
   const runDiagnose = async () => {
     setDiagnosis("checking");
     try {
-      setDiagnosis(await diagnoseLogoUpload());
+      setDiagnosis(await diagnoseLogoUpload(storeId));
     } catch {
       setDiagnosis({ ok: false, steps: [] });
     }

@@ -84,8 +84,8 @@ export async function uploadStoreLogo(storeId, file) {
 export async function removeStoreLogo(storeId) {
   await callFn("upload-store-logo", { action: "remove", storeId });
 }
-export async function diagnoseLogoUpload() {
-  return callFn("upload-store-logo", { action: "diagnose" });
+export async function diagnoseLogoUpload(storeId) {
+  return callFn("upload-store-logo", { action: "diagnose", storeId });
 }
 
 /** Store photos ("what the store looks like") — up to 6, see sql/032. */
@@ -99,6 +99,6 @@ export async function uploadStorePhoto(storeId, file) {
 export async function removeStorePhoto(storeId, photoId) {
   await callFn("upload-store-photo", { action: "remove", storeId, photoId });
 }
-export async function diagnosePhotoUpload() {
-  return callFn("upload-store-photo", { action: "diagnose" });
+export async function diagnosePhotoUpload(storeId) {
+  return callFn("upload-store-photo", { action: "diagnose", storeId });
 }

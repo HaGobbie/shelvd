@@ -54,7 +54,35 @@ Deno.serve(async (req) => {
     const { action, storeId, image } = body as { action?: string; storeId?: string; image?: string };
 
     // Read-only self-check — see githubStorage.ts. Doesn't touch GitHub content, just credentials.
-    if (action === "diagnose") return json(await diagnose());
+    // Read-only self-check (see githubStorage.ts for the GitHub half). This
+    // ALSO checks the Supabase side now: diagnose() only ever talked to
+    // GitHub, so it could — and did — come back all-green while the actual
+    // upload still failed with "store_not_found". That happens when these
+    // Edge Functions are deployed to a DIFFERENT Supabase project than the
+    // one the website's database actually lives in (SUPABASE_URL/the
+    // service-role key are injected per-project automatically, based on
+    // whichever project "supabase functions deploy" was run against — a
+    // separate thing from which project the SQL editor happened to be
+    // pointed at, or which project the frontend's own .env uses).
+    if (action === "diagnose") {
+      const gh = await diagnose();
+      const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "(not set)";
+      const dbSteps: Array<{ step: string; ok: boolean; detail: string }> = [
+        { step: "supabase_project", ok: true, detail: `These functions are connected to Supabase project: ${supabaseUrl} — compare this against Project Settings → API → Project URL for the project your website actually uses.` },
+      ];
+      if (storeId) {
+        const { data: storeRow, error: storeErr } = await admin.from("stores").select("id").eq("id", storeId).maybeSingle();
+        const found = Boolean(storeRow) && !storeErr;
+        dbSteps.push({
+          step: "store_lookup",
+          ok: found,
+          detail: found
+            ? `Found store ${storeId} in this database.`
+            : `Store ${storeId} was NOT found in this database${storeErr ? ` (${storeErr.message})` : ""}. If you can see and edit this exact store on the live site, these functions are almost certainly deployed to the WRONG Supabase project — run "supabase projects list" / check which project "supabase link" points to, re-link to the correct one, then redeploy both functions.`,
+        });
+      }
+      return json({ ok: gh.ok && dbSteps.every((s) => s.ok), steps: [...dbSteps, ...gh.steps] });
+    }
 
     if (!GH_TOKEN || !GH_REPO) return json({ error: "server_not_configured" }, 500);
     if (!storeId || !["upload", "remove"].includes(action ?? "")) return json({ error: "bad_request" }, 400);

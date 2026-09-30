@@ -46,7 +46,7 @@ export default function StorePhotoManager({ storeId }) {
 
   const runDiagnose = async () => {
     setDiagnosis("checking");
-    try { setDiagnosis(await diagnosePhotoUpload()); }
+    try { setDiagnosis(await diagnosePhotoUpload(storeId)); }
     catch { setDiagnosis({ ok: false, steps: [] }); }
   };
 
