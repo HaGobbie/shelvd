@@ -14,12 +14,31 @@ import { VitePWA } from "vite-plugin-pwa";
 const REPO_NAME = "shelvd";
 
 export default defineConfig({
+  // A visible build marker (console + a tiny footer line on the sign-in
+  // screen) so it's possible to confirm at a glance whether a deployed site
+  // is actually running a given round of changes, instead of guessing from
+  // behavior alone — see src/main.jsx and components/AuthScreen.jsx.
+  define: {
+    __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
+  },
   base: `/${REPO_NAME}/`,
 
   plugins: [
     react(),
     VitePWA({
-      registerType: "autoUpdate",
+      // Was "autoUpdate" with the default auto-injected registration
+      // script, which updates silently in the background with no visible
+      // confirmation that it happened. That invisibility is exactly what
+      // made several rounds of real fixes (store logo/photo uploads,
+      // language-prompt timing) impossible to verify from the outside — a
+      // browser tab or an already-installed PWA can keep serving a stale
+      // cached build for a long time with nothing on screen indicating it.
+      // injectRegister: false + the explicit registerSW() call in main.jsx
+      // shows a small "Update available" toast the moment a new build is
+      // detected, so applying an update is a visible, one-tap action
+      // instead of an invisible maybe.
+      registerType: "prompt",
+      injectRegister: false,
       includeAssets: ["favicon.svg"],
       manifest: {
         name: "Shelvd",

@@ -274,6 +274,12 @@ export default function AuthScreen() {
           </>
         )}
       </div>
+      {/* Tiny, unobtrusive build marker — lets anyone confirm which round of
+          changes a deployed site is actually running, since a stale cached
+          build otherwise looks identical to a fresh one from the outside. */}
+      <span style={{ position: "fixed", bottom: "calc(6px + env(safe-area-inset-bottom, 0px))", left: 0, right: 0, textAlign: "center", fontSize: 10, color: "rgba(255,255,255,0.35)", pointerEvents: "none" }}>
+        {typeof __BUILD_TIME__ !== "undefined" ? __BUILD_TIME__ : ""}
+      </span>
     </div>
   );
 }
