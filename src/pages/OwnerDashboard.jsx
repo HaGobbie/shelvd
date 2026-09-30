@@ -42,7 +42,7 @@ import { Sidebar, BottomNav } from "../components/dashboard/DashNav";
 import { DailyCashOutCard, NeighborhoodDemandCard, StockAlertsCard } from "../components/dashboard/InsightCards";
 import FirstProductCTA from "../components/dashboard/FirstProductCTA";
 import SyncStatus from "../components/dashboard/SyncStatus";
-import LanguageChooserModal, { hasSeenLanguagePrompt } from "../components/LanguageChooserModal";
+import { notifyTourClosed } from "../hooks/useLanguagePrompt";
 import ProductFormModal from "../components/ProductFormModal";
 import ConfirmDeleteModal from "../components/ConfirmDeleteModal";
 import StoreRegistrationForm from "../components/StoreRegistrationForm";
@@ -290,7 +290,6 @@ export default function OwnerDashboard({ session }) {
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
   const [whatsNewOpen, setWhatsNewOpen] = useState(false);
-  const [langPromptOpen, setLangPromptOpen] = useState(false);
 
   useEffect(() => {
     if (!user || !storesChecked || storesLoading) return;
@@ -300,10 +299,10 @@ export default function OwnerDashboard({ session }) {
     } else if (getLastSeenChangelogVersion() < CHANGELOG_VERSION) {
       setWhatsNewOpen(true);
     }
-    // Language prompt intentionally waits for the tour to be dismissed
-    // first (handled in the onboarding onClose below) rather than firing
-    // here, so a first-time owner never sees two full-screen prompts race.
-    if (hasSeenTour(OWNER_TOUR_STORAGE_KEY) && !hasSeenLanguagePrompt()) setLangPromptOpen(true);
+    // The first-launch language prompt (if still unanswered) is handled by
+    // the single app-wide controller in useLanguagePrompt.js — for a
+    // first-time owner it waits for notifyTourClosed() below rather than
+    // racing this tour.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, storesChecked, storesLoading]);
 
@@ -615,10 +614,9 @@ export default function OwnerDashboard({ session }) {
       <StoreEditModal isOpen={storeEditOpen} onClose={() => setStoreEditOpen(false)} store={myStore} />
       <NewTransactionModal isOpen={newTransactionOpen} onClose={() => setNewTransactionOpen(false)} inventory={inventory} />
       <DeleteStoreConfirm isOpen={deleteStoreConfirmOpen} onClose={() => setDeleteStoreConfirmOpen(false)} store={myStore} onDeleted={() => refetchStores()} />
-      <OnboardingTour isOpen={onboardingOpen} onClose={() => { setOnboardingOpen(false); if (!hasSeenLanguagePrompt()) setLangPromptOpen(true); }}
+      <OnboardingTour isOpen={onboardingOpen} onClose={() => { setOnboardingOpen(false); notifyTourClosed(); }}
         steps={OWNER_TOUR_STEPS} storageKey={OWNER_TOUR_STORAGE_KEY} labels={tourLabels} />
       <WhatsNewModal isOpen={whatsNewOpen} onClose={() => { setWhatsNewOpen(false); markChangelogSeen(CHANGELOG_VERSION); }} />
-      <LanguageChooserModal isOpen={langPromptOpen} onDone={() => setLangPromptOpen(false)} />
     </div>
   );
 }

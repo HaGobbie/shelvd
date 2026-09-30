@@ -72,7 +72,10 @@ Deno.serve(async (req) => {
     if (!image || typeof image !== "string") return json({ error: "no_image" }, 400);
     const bytes = Uint8Array.from(atob(image.replace(/^data:image\/webp;base64,/, "")), (c) => c.charCodeAt(0));
     if (bytes.length > MAX_BYTES) return json({ error: "too_large" }, 413);
-    if (!isWebp(bytes)) return json({ error: "not_webp" }, 415);
+    if (!isWebp(bytes)) {
+      const head = Array.from(bytes.subarray(0, 16)).map((b) => b.toString(16).padStart(2, "0")).join(" ");
+      return json({ error: "not_webp", detail: `Received ${bytes.length} bytes; first 16 hex: ${head || "(empty)"}. Expected them to start with "52 49 46 46" (RIFF).` }, 415);
+    }
 
     const path = `${FOLDER}/${storeId}/${await shortHash(bytes)}.webp`;
     const put = await putFile(path, bytes, `Add photo for store ${storeId}`);

@@ -10,7 +10,7 @@ import StoreAvatar from "./StoreAvatar";
 import { uploadStoreLogo, removeStoreLogo, diagnoseLogoUpload } from "../utils/storeLogo";
 import { useLanguage } from "../i18n/LanguageContext";
 
-const KNOWN_ERRORS = ["not_image", "bad_image", "webp_unsupported", "too_large", "forbidden", "unauthorized"];
+const KNOWN_ERRORS = ["not_image", "bad_image", "webp_unsupported", "not_webp", "client_encode_mismatch", "too_large", "forbidden", "unauthorized"];
 
 export default function StoreLogoUploader({ storeId, storeName, logoUrl, onChanged }) {
   const { t } = useLanguage();

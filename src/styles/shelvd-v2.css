@@ -315,7 +315,29 @@ html[data-theme="dark"] .rp__stop-meta { color: var(--color-brand-primary-light)
 .rp-pin > * , .rp-pin { line-height: 1; }
 .leaflet-marker-icon .rp-pin { font-family: var(--font-heading); }
 .rp-pin--static { position: static; transform: none; border-radius: 50%; width: 30px; height: 30px; flex-shrink: 0; font-size: 13px; }
-.rp-you { width: 22px; height: 22px; border-radius: 50%; background: #2563eb; border: 3px solid #fff; box-shadow: 0 0 0 6px rgba(37,99,235,.25), 0 2px 6px rgba(0,0,0,.3); }
+.rp-pin--done { background: var(--color-available); }
+.rp-you { position: relative; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; }
+.rp-you::before { content: ""; width: 16px; height: 16px; border-radius: 50%; background: #2563eb; border: 3px solid #fff; box-shadow: 0 0 0 5px rgba(37,99,235,.25), 0 2px 6px rgba(0,0,0,.3); }
+/* The wedge is attached via ::after so rotating the whole .rp-you box (see
+   the inline `transform` set from the live heading in RoutePlanner.jsx)
+   spins the pointer around the dot's own center — a standard "which way am
+   I facing" compass marker. No heading yet ("stationary, compass not
+   available") → plain dot, no wedge, rather than pointing somewhere wrong. */
+.rp-you--heading::after { content: ""; position: absolute; top: -3px; left: 50%; transform: translateX(-50%); width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-bottom: 11px solid #2563eb; filter: drop-shadow(0 1px 2px rgba(0,0,0,.4)); }
+.rp__compass-btn { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 999px; background: var(--color-surface-3); color: var(--color-text-secondary); font-size: 12px; font-weight: 700; border: 1px solid var(--color-border); }
+.rp__accuracy-note { font-size: 11.5px; color: var(--color-text-muted); margin-top: -4px; }
+.rp__done-btn { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 42px; margin-top: 4px; border-radius: 0 0 14px 14px; background: var(--color-available-bg); color: var(--color-available); font-weight: 800; font-size: 13px; border-top: 1px solid var(--color-available-border); }
+.rp__done-btn:hover { background: var(--color-available); color: #fff; }
+.rp__done-list { list-style: none; display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+.rp__done-list li { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 12px; background: var(--color-surface-2); color: var(--color-text-muted); font-size: 13px; }
+.rp__done-list li svg:first-child { color: var(--color-available); flex-shrink: 0; }
+.rp__done-list li span { flex: 1; text-decoration: line-through; }
+.rp__done-list li button { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; font-weight: 700; color: var(--color-text-secondary); }
+.rp__done-list li button:hover { color: var(--color-brand-primary); }
+.rp__celebrate { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 8px; padding: 40px 24px; }
+.rp__celebrate svg { color: var(--color-brand-primary); margin-bottom: 6px; }
+.rp__celebrate h3 { font-family: var(--font-heading); font-size: 20px; font-weight: 800; }
+.rp__celebrate p { font-size: 13.5px; color: var(--color-text-secondary); max-width: 320px; line-height: 1.55; }
 
 /* ── Super admin ───────────────────────────────────────────────────────── */
 .admin { min-height: 100dvh; background: var(--color-surface-2); color: var(--color-text-primary); }

@@ -9,7 +9,7 @@ import { uploadStorePhoto, removeStorePhoto, diagnosePhotoUpload } from "../util
 import { useLanguage } from "../i18n/LanguageContext";
 
 const MAX_PHOTOS = 6;
-const KNOWN_ERRORS = ["not_image", "bad_image", "webp_unsupported", "too_large", "too_many_photos", "forbidden"];
+const KNOWN_ERRORS = ["not_image", "bad_image", "webp_unsupported", "not_webp", "client_encode_mismatch", "too_large", "too_many_photos", "forbidden"];
 const CLIENT_SIDE_ONLY = ["not_image", "bad_image", "webp_unsupported", "too_large", "too_many_photos"];
 
 export default function StorePhotoManager({ storeId }) {

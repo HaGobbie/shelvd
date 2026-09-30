@@ -5,6 +5,26 @@ import { supabase } from "../config/supabaseClient";
 import { imageFileToWebp, blobToBase64 } from "./imageToWebp";
 
 /**
+ * A cross-check for the exact failure this uploader chased for several
+ * rounds: the browser said blob.type === "image/webp", but the bytes that
+ * actually reached the server weren't valid WebP. Reading the real magic
+ * bytes here, BEFORE sending anything, tells us for certain whether the
+ * problem is the browser's encoder lying about the type it produced (this
+ * throws) or something mangling the data in transit / on the server (this
+ * passes, and the server-side "not_webp" detail — now including its own
+ * byte preview — is what to compare against).
+ */
+async function assertWebpMagicBytes(blob) {
+  const head = new Uint8Array(await blob.slice(0, 12).arrayBuffer());
+  const tag = (start, len) => String.fromCharCode(...head.slice(start, start + len));
+  if (tag(0, 4) === "RIFF" && tag(8, 4) === "WEBP") return;
+  const hex = Array.from(head).map((b) => b.toString(16).padStart(2, "0")).join(" ");
+  const err = new Error("client_encode_mismatch");
+  err.detail = `The browser reported image/webp but the file's first bytes are "${hex || "(empty)"}" instead of RIFF/WEBP.`;
+  throw err;
+}
+
+/**
  * Everything below is wrapped in one try/catch on purpose. If the function
  * isn't deployed yet, or the project ref is wrong, or CORS blocks the
  * request, supabase-js's `invoke()` doesn't necessarily resolve with a tidy
@@ -56,6 +76,7 @@ async function callFn(name, payload) {
 /** Converts to WebP in the browser, then uploads. Resolves with the new public logo URL. */
 export async function uploadStoreLogo(storeId, file) {
   const { blob } = await imageFileToWebp(file, { maxSize: 512, targetBytes: 100 * 1024 });
+  await assertWebpMagicBytes(blob);
   const image = await blobToBase64(blob);
   const res = await callFn("upload-store-logo", { action: "upload", storeId, image });
   return res.logoUrl;
@@ -70,6 +91,7 @@ export async function diagnoseLogoUpload() {
 /** Store photos ("what the store looks like") — up to 6, see sql/032. */
 export async function uploadStorePhoto(storeId, file) {
   const { blob } = await imageFileToWebp(file, { maxSize: 1280, targetBytes: 220 * 1024 });
+  await assertWebpMagicBytes(blob);
   const image = await blobToBase64(blob);
   const res = await callFn("upload-store-photo", { action: "upload", storeId, image });
   return res.photo;

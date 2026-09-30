@@ -25,7 +25,8 @@ import { ResetPasswordScreen } from "./components/AuthScreen";
 import ShoppingListSheet from "./components/ShoppingListSheet";
 import RoutePlanner from "./components/RoutePlanner";
 import { ShoppingListProvider, useShoppingList } from "./hooks/useShoppingList";
-import LanguageChooserModal, { hasSeenLanguagePrompt } from "./components/LanguageChooserModal";
+import LanguageChooserModal from "./components/LanguageChooserModal";
+import { useLanguagePrompt } from "./hooks/useLanguagePrompt";
 import { InstallBanner, InstallLauncher } from "./components/InstallPrompt";
 import { useMapMarkers, useStoreDetails, useDebouncedSearchMatches } from "./hooks/useStores";
 import { useOnlineStatus } from "./hooks/useOnlineStatus";
@@ -142,17 +143,6 @@ function AppShell() {
   const { theme, toggleTheme } = useTheme();
   const isOnline = useOnlineStatus();
   const { pendingCount, setListOpen } = useShoppingList();
-
-  // First-launch language prompt for plain map visitors (owners get this
-  // AFTER their onboarding tour instead — see OwnerDashboard.jsx — so the
-  // two never show back-to-back for the same person).
-  const [langPromptOpen, setLangPromptOpen] = useState(false);
-  useEffect(() => {
-    if (route !== "#/dashboard" && route !== "#/admin" && !hasSeenLanguagePrompt()) {
-      const id = setTimeout(() => setLangPromptOpen(true), 900);
-      return () => clearTimeout(id);
-    }
-  }, [route]);
 
   // ─── Global Supabase auth session ────────────────────────────────────────
   const [session, setSession] = useState(null);
@@ -450,7 +440,6 @@ function AppShell() {
         onClose={handleSheetClose}
       />
 
-      <LanguageChooserModal isOpen={langPromptOpen} onDone={() => setLangPromptOpen(false)} />
       <InstallBanner />
       <InstallLauncher style={{ position: "fixed", left: 16, bottom: "calc(16px + env(safe-area-inset-bottom, 0px))", zIndex: 150 }} />
 
@@ -627,6 +616,14 @@ function AppShell() {
  * (it might be rendering precisely because that provider crashed) — it
  * reads the persisted language choice directly instead.
  */
+// Mounted once, above every route (map, dashboard, admin) — see
+// useLanguagePrompt.js for why this replaced two separate instances that
+// could previously both end up open at the same time.
+function GlobalLanguagePrompt() {
+  const { open, close } = useLanguagePrompt();
+  return <LanguageChooserModal isOpen={open} onDone={close} />;
+}
+
 export default function App() {
   return (
     <ErrorBoundary>
@@ -634,6 +631,7 @@ export default function App() {
         <LanguageProvider>
           <ShoppingListProvider>
             <AppShell />
+            <GlobalLanguagePrompt />
           </ShoppingListProvider>
         </LanguageProvider>
       </ThemeProvider>
