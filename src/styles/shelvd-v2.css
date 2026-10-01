@@ -225,13 +225,26 @@
 .inline-host { position: relative; }
 .inline-host .sheet-overlay, .inline-host .sheet-handle { display: none !important; }
 .inline-host .sheet-panel {
+  /* Fully de-flexed on purpose, not just unconstrained: the bottom-sheet
+     version relies on `display:flex; flex-direction:column` + a flex:1
+     scrolling body to pin a header/footer and scroll only the middle —
+     that combination is what was silently capping this content's height
+     and blocking the page's own scroll on mobile (desktop's taller
+     viewport mostly hid the same bug). Switching to plain block layout
+     removes every flex/height computation in one step: the header, body
+     and footer below just stack normally and the PAGE scrolls, which is
+     also simpler to reason about than trying to keep a flex layout's
+     height math correct once it's no longer a fixed-height sheet. */
+  display: block !important;
   position: static !important; transform: none !important; width: 100% !important; max-width: none !important;
-  max-height: none !important; z-index: auto !important; left: auto !important; right: auto !important; bottom: auto !important;
+  max-height: none !important; height: auto !important; z-index: auto !important; left: auto !important; right: auto !important; bottom: auto !important;
   overflow: visible !important; padding-bottom: 0;
   background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg) !important; box-shadow: var(--shadow-sm) !important;
 }
 .inline-host .sheet-header { padding: 16px 20px; }
-.inline-host .sheet-inventory { overflow: visible !important; }
+.inline-host .sheet-inventory {
+  overflow: visible !important; flex: none !important; min-height: 0 !important; height: auto !important;
+}
 .inline-host .sheet-close-btn { display: none; }
 .dash--desktop .inline-host:not(.inline-host--wide) .sheet-panel { max-width: 720px !important; }
 

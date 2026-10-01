@@ -1,72 +1,49 @@
 // src/hooks/useLanguagePrompt.js
 // A single, app-wide controller for the first-launch "English or Tagalog?"
-// prompt (LanguageChooserModal). This used to be two separate instances —
-// one in App.jsx for map visitors, one in OwnerDashboard.jsx for owners,
-// each with its own timer — and they could both end up open at once (the
-// owner's onboarding tour rendering on top of the map's still-mounted
-// language modal) depending on navigation timing. One controller, mounted
-// once at the very top of the app (see App.jsx), removes the race by
-// construction: there is only ever one instance to show.
+// prompt (LanguageChooserModal), mounted once at the very top of the app
+// (see App.jsx) so there's only ever one instance — no risk of it and some
+// other full-screen prompt both ending up open at once.
 //
-// Sequencing:
-//   • On the public map: shown shortly after the page loads.
-//   • In the owner dashboard, for a first-time owner: waits for the
-//     onboarding tour to close (see notifyTourClosed(), called from
-//     OwnerDashboard's <OnboardingTour onClose>) before showing, so the two
-//     full-screen prompts never overlap.
-//   • In the owner dashboard, for a returning owner who has already seen the
-//     tour but somehow never got this prompt: shown shortly after landing.
-//   • Never shown at all once answered once, anywhere in the app.
+// Priority: this ALWAYS shows first, before anything else that might also
+// want the screen on a first visit. The owner dashboard's onboarding tour
+// specifically waits for this to close (see onLanguagePromptClosed(), used
+// in OwnerDashboard.jsx) rather than racing it — on the public map there's
+// nothing else competing for the screen, so showing it is already enough.
+//
+// Earlier version of this file had the sequencing backwards (tour first,
+// language prompt waiting on the tour's close event) using a
+// "shelvd:tour-closed" event. That's been inverted: this prompt no longer
+// waits on anything, and it's the tour that now waits on THIS one.
 
 import { useState, useEffect, useCallback } from "react";
 import { hasSeenLanguagePrompt } from "../components/LanguageChooserModal";
-import { hasSeenTour } from "../components/OnboardingTour";
-import { OWNER_TOUR_STORAGE_KEY } from "../tours/ownerTourSteps";
 
-const TOUR_CLOSED_EVENT = "shelvd:tour-closed";
-const MAP_DELAY_MS = 900;
-const RETURNING_OWNER_DELAY_MS = 500;
+const CLOSED_EVENT = "shelvd:language-prompt-closed";
+const SHOW_DELAY_MS = 500; // just enough to avoid a flash on first paint
 
-/** Call this when the onboarding tour closes (skip, X, or finishing it). */
-export function notifyTourClosed() {
-  window.dispatchEvent(new CustomEvent(TOUR_CLOSED_EVENT));
-}
-
-function isDashboardish(hash) {
-  return hash === "#/dashboard" || hash === "#/admin";
+/** Call this (or just use the hook below) wherever something needs to wait
+ *  for the language prompt to be answered before showing its own first-run
+ *  UI — e.g. OwnerDashboard's onboarding tour. Fires immediately if the
+ *  prompt has already been answered in an earlier session. */
+export function onLanguagePromptClosed(fn) {
+  if (hasSeenLanguagePrompt()) { fn(); return () => {}; }
+  window.addEventListener(CLOSED_EVENT, fn);
+  return () => window.removeEventListener(CLOSED_EVENT, fn);
 }
 
 export function useLanguagePrompt() {
   const [open, setOpen] = useState(false);
-  const [hash, setHash] = useState(() => window.location.hash || "#/");
 
   useEffect(() => {
-    const onHashChange = () => setHash(window.location.hash || "#/");
-    window.addEventListener("hashchange", onHashChange);
-    return () => window.removeEventListener("hashchange", onHashChange);
-  }, []);
-
-  useEffect(() => {
-    if (open || hasSeenLanguagePrompt()) return undefined;
-
-    if (isDashboardish(hash)) {
-      // A first-time owner is about to see the onboarding tour — wait for
-      // the tour-closed event below instead of racing it.
-      if (!hasSeenTour(OWNER_TOUR_STORAGE_KEY)) return undefined;
-      const id = setTimeout(() => setOpen(true), RETURNING_OWNER_DELAY_MS);
-      return () => clearTimeout(id);
-    }
-
-    const id = setTimeout(() => setOpen(true), MAP_DELAY_MS);
+    if (hasSeenLanguagePrompt()) return undefined;
+    const id = setTimeout(() => setOpen(true), SHOW_DELAY_MS);
     return () => clearTimeout(id);
-  }, [hash, open]);
-
-  useEffect(() => {
-    const onTourClosed = () => { if (!hasSeenLanguagePrompt()) setOpen(true); };
-    window.addEventListener(TOUR_CLOSED_EVENT, onTourClosed);
-    return () => window.removeEventListener(TOUR_CLOSED_EVENT, onTourClosed);
   }, []);
 
-  const close = useCallback(() => setOpen(false), []);
+  const close = useCallback(() => {
+    setOpen(false);
+    window.dispatchEvent(new CustomEvent(CLOSED_EVENT));
+  }, []);
+
   return { open, close };
 }

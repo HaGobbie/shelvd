@@ -42,7 +42,7 @@ import { Sidebar, BottomNav } from "../components/dashboard/DashNav";
 import { DailyCashOutCard, NeighborhoodDemandCard, StockAlertsCard } from "../components/dashboard/InsightCards";
 import FirstProductCTA from "../components/dashboard/FirstProductCTA";
 import SyncStatus from "../components/dashboard/SyncStatus";
-import { notifyTourClosed } from "../hooks/useLanguagePrompt";
+import { onLanguagePromptClosed } from "../hooks/useLanguagePrompt";
 import ProductFormModal from "../components/ProductFormModal";
 import ConfirmDeleteModal from "../components/ConfirmDeleteModal";
 import StoreRegistrationForm from "../components/StoreRegistrationForm";
@@ -293,17 +293,21 @@ export default function OwnerDashboard({ session }) {
 
   useEffect(() => {
     if (!user || !storesChecked || storesLoading) return;
-    if (!hasSeenTour(OWNER_TOUR_STORAGE_KEY)) {
-      setOnboardingOpen(true);
-      markChangelogSeen(CHANGELOG_VERSION);
-    } else if (getLastSeenChangelogVersion() < CHANGELOG_VERSION) {
-      setWhatsNewOpen(true);
-    }
-    // The first-launch language prompt (if still unanswered) is handled by
-    // the single app-wide controller in useLanguagePrompt.js — for a
-    // first-time owner it waits for notifyTourClosed() below rather than
-    // racing this tour.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const openTourOrWhatsNew = () => {
+      if (!hasSeenTour(OWNER_TOUR_STORAGE_KEY)) {
+        setOnboardingOpen(true);
+        markChangelogSeen(CHANGELOG_VERSION);
+      } else if (getLastSeenChangelogVersion() < CHANGELOG_VERSION) {
+        setWhatsNewOpen(true);
+      }
+    };
+    // The language prompt (global, mounted once in App.jsx) takes priority
+    // over the onboarding tour — for a first-time owner who hasn't answered
+    // it yet, wait for it to close before opening the tour, so the two
+    // full-screen prompts never show at once. onLanguagePromptClosed()
+    // fires immediately if the prompt was already answered in an earlier
+    // session (nothing to wait for).
+    return onLanguagePromptClosed(openTourOrWhatsNew);
   }, [user, storesChecked, storesLoading]);
 
   const tourLabels = {
@@ -614,7 +618,7 @@ export default function OwnerDashboard({ session }) {
       <StoreEditModal isOpen={storeEditOpen} onClose={() => setStoreEditOpen(false)} store={myStore} />
       <NewTransactionModal isOpen={newTransactionOpen} onClose={() => setNewTransactionOpen(false)} inventory={inventory} />
       <DeleteStoreConfirm isOpen={deleteStoreConfirmOpen} onClose={() => setDeleteStoreConfirmOpen(false)} store={myStore} onDeleted={() => refetchStores()} />
-      <OnboardingTour isOpen={onboardingOpen} onClose={() => { setOnboardingOpen(false); notifyTourClosed(); }}
+      <OnboardingTour isOpen={onboardingOpen} onClose={() => setOnboardingOpen(false)}
         steps={OWNER_TOUR_STEPS} storageKey={OWNER_TOUR_STORAGE_KEY} labels={tourLabels} />
       <WhatsNewModal isOpen={whatsNewOpen} onClose={() => { setWhatsNewOpen(false); markChangelogSeen(CHANGELOG_VERSION); }} />
     </div>
