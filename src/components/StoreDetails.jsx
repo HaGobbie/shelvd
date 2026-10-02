@@ -343,6 +343,15 @@ export default function StoreDetails({ store, searchQuery = "", onClose }) {
               </button>
             </div>
 
+            {/* Everything below the pinned header (avatar/name/close button)
+                now scrolls together as ONE region — address, directions,
+                socials, photos, and the inventory list. Previously only the
+                inventory list itself scrolled, with the meta block and photo
+                gallery sitting above it as fixed, non-scrolling space; once a
+                store had socials AND photos that block could grow tall
+                enough to leave little or no room for the inventory list
+                underneath, especially on shorter phone screens. */}
+            <div className="sheet-scroll">
             {/* Store meta */}
             <div className="sheet-meta">
               <div className="sheet-meta__item">
@@ -478,6 +487,8 @@ export default function StoreDetails({ store, searchQuery = "", onClose }) {
                   />
                 ))}
               </div>
+            </div>
+            {/* /.sheet-scroll */}
             </div>
           </motion.div>
         </>

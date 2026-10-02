@@ -619,11 +619,22 @@ html[data-theme="dark"] .leaflet-control-attribution a {
   flex-shrink: 0;
 }
 
-.sheet-inventory {
+/* The single scrolling region for everything below the pinned header: meta
+   (address/phone/directions/socials), the photo gallery, and the inventory
+   list all scroll together now. Previously only .sheet-inventory scrolled on
+   its own, with the meta block and gallery as fixed, non-scrolling space
+   above it — fine when that block was short, but a store with both socials
+   and photos could grow it tall enough to crowd out the inventory list
+   entirely on shorter phone screens. */
+.sheet-scroll {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  padding: var(--space-4) var(--space-5) var(--space-6);
   -webkit-overflow-scrolling: touch;
+}
+
+.sheet-inventory {
+  padding: var(--space-4) var(--space-5) var(--space-6);
 }
 
 .sheet-inventory__heading {
