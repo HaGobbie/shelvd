@@ -25,14 +25,14 @@ export default function LanguageChooserModal({ isOpen, onDone }) {
     <AnimatePresence>
       {isOpen && (
         <>
-          <motion.div className="sheet-overlay" style={{ zIndex: 2000 }} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} />
+          <motion.div className="sheet-overlay" style={{ zIndex: 9000 }} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} />
           {/* Centering via a flex wrapper, NOT position:fixed + transform:
               translate(-50%,-50%) on the animated element itself — Framer
               Motion writes its own inline `transform` while animating
               scale/y, which silently replaces a centering transform and
               leaves the dialog stuck half on/off screen. See the same fix
               applied to .sheet-panel and .confirm-dialog elsewhere. */}
-          <div className="lang-modal-wrap" style={{ zIndex: 2001 }}>
+          <div className="lang-modal-wrap" style={{ zIndex: 9001 }}>
             <motion.div className="lang-modal" role="dialog" aria-modal="true" aria-label="Choose your language"
               initial={{ opacity: 0, scale: 0.92, y: 12 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }}
               transition={{ type: "spring", damping: 24, stiffness: 320 }}>

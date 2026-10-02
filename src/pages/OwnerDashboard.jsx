@@ -461,7 +461,7 @@ export default function OwnerDashboard({ session }) {
         ]} />
       {addTab === "single" ? (
         <div className="inline-host" key="single">
-          <ProductFormModal isOpen onClose={goInventory} storeId={myStore?.id} initialData={null} />
+          <ProductFormModal isOpen onClose={goInventory} storeId={myStore?.id} initialData={null} inline />
         </div>
       ) : (
         <div className="inline-host inline-host--wide" key="many">

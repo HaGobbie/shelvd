@@ -105,7 +105,7 @@ const sheetVariants = {
   exit:    { y: "100%", opacity: 0, transition: { type: "tween", ease: "easeIn", duration: 0.2 } },
 };
 
-export default function ProductFormModal({ isOpen, onClose, storeId, initialData = null }) {
+export default function ProductFormModal({ isOpen, onClose, storeId, initialData = null, inline = false }) {
   const { t } = useLanguage();
   const isEditMode = Boolean(initialData);
 
@@ -363,10 +363,23 @@ export default function ProductFormModal({ isOpen, onClose, storeId, initialData
             variants={overlayVariants} initial="hidden" animate="visible" exit="exit"
             onClick={onClose} aria-hidden="true" />
 
+          {/* The CSS-only pass at fixing mobile scrolling here didn't work
+              because this was never a CSS problem: `drag="y"` makes Framer
+              Motion capture vertical touch gestures ANYWHERE on this panel
+              to drag the whole sheet down (its dismiss gesture), which
+              competes with — and wins against — the browser's native
+              finger-scroll for that same vertical swipe. That's harmless
+              for the real bottom-sheet use (mobile Safari still lets a
+              scrollable child win once its own scroll is exhausted), but
+              when this is embedded inline as normal page content (see
+              OwnerDashboard's "Add Products" page), there's no sheet to
+              dismiss, so the drag gesture serves no purpose except
+              swallowing the page's own scroll. Disabled outright for that
+              case instead of trying to make the two gestures cooperate. */}
           <motion.div className="sheet-panel" style={{ zIndex: 1001, maxHeight: "92dvh" }}
             variants={sheetVariants} initial="hidden" animate="visible" exit="exit"
-            drag={showReasonPrompt ? false : "y"} dragConstraints={{ top: 0 }} dragElastic={{ top: 0, bottom: 0.4 }}
-            onDragEnd={(_, info) => { if (info.offset.y > 100) onClose(); }}
+            drag={inline || showReasonPrompt ? false : "y"} dragConstraints={{ top: 0 }} dragElastic={{ top: 0, bottom: 0.4 }}
+            onDragEnd={(_, info) => { if (!inline && info.offset.y > 100) onClose(); }}
             role="dialog" aria-modal="true"
             aria-label={isEditMode ? t("owner.product.editTitle") : t("owner.product.addTitle")}>
 
@@ -461,11 +474,12 @@ export default function ProductFormModal({ isOpen, onClose, storeId, initialData
                     {/* AI Snap & Fill — populates Name/Category/Unit/Price
                         from a photo; the merchant still reviews and taps
                         Save themselves, nothing here saves automatically. */}
+                    {/* No `capture="environment"` on purpose — see the
+                        matching comment in BulkImportModal.jsx. */}
                     <input
                       ref={scanFileInputRef}
                       type="file"
                       accept="image/*"
-                      capture="environment"
                       style={{ display: "none" }}
                       onChange={handleScanFile}
                     />
@@ -698,5 +712,7 @@ export default function ProductFormModal({ isOpen, onClose, storeId, initialData
     </AnimatePresence>
   );
 }
+
+
 
 

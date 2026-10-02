@@ -585,11 +585,15 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
 
           {step === "choose" && (
             <div>
+              {/* Deliberately no `capture="environment"` here: that attribute
+                  forces mobile browsers to jump straight into the camera app,
+                  skipping their normal "Take Photo / Choose from Library"
+                  picker entirely — not a choice, a hard override. Plain
+                  accept="image/*" lets the OS show its usual chooser instead. */}
               <input
                 ref={receiptFileInputRef}
                 type="file"
                 accept="image/*"
-                capture="environment"
                 style={{ display: "none" }}
                 onChange={handleReceiptFileInputChange}
               />
@@ -886,5 +890,7 @@ export default function BulkImportModal({ isOpen, onClose, storeId, onImported }
     </AnimatePresence>
   );
 }
+
+
 
 
